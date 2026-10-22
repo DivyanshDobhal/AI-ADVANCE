@@ -1,6 +1,5 @@
 import {
   createSessionToken,
-  findOrCreateOAuthUser,
   findUserByToken,
   getAuthDb,
   hashPassword,
@@ -8,31 +7,13 @@ import {
   publicUser,
   verifyPassword
 } from "../src/auth-db.js";
-import {
-  buildFrontendErrorRedirect,
-  buildFrontendSuccessRedirect,
-  buildGitHubAuthUrl,
-  buildGoogleAuthUrl,
-  exchangeGitHubCode,
-  exchangeGoogleCode,
-  verifyOAuthState
-} from "../src/oauth.js";
 
 export default async function handler(req, res) {
   const url = new URL(req.url || "/api/auth", "http://localhost");
   const segments = url.pathname.replace(/^\/api\/auth\/?/, "").split("/").filter(Boolean);
-  const [action, subaction] = segments;
+  const [action] = segments;
 
   try {
-    if (req.method === "GET" && action === "google" && !subaction) return startOAuth(req, res, "google");
-    if (req.method === "GET" && action === "google" && subaction === "callback") {
-      return finishOAuth(req, res, "google");
-    }
-    if (req.method === "GET" && action === "github" && !subaction) return startOAuth(req, res, "github");
-    if (req.method === "GET" && action === "github" && subaction === "callback") {
-      return finishOAuth(req, res, "github");
-    }
-
     if (req.method === "POST" && action === "register") return register(req, res);
     if (req.method === "POST" && action === "login") return login(req, res);
     if (req.method === "GET" && action === "me") return me(req, res);
@@ -44,50 +25,6 @@ export default async function handler(req, res) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const status = message.includes("MONGODB_URI") || message.includes("MONGO_URL") ? 503 : 500;
     return res.status(status).json({ error: "Auth request failed", detail: message });
-  }
-}
-
-function startOAuth(req, res, provider) {
-  try {
-    const authUrl = provider === "google" ? buildGoogleAuthUrl(req) : buildGitHubAuthUrl(req);
-    res.writeHead(302, { Location: authUrl });
-    res.end();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "OAuth is not configured.";
-    res.writeHead(302, { Location: buildFrontendErrorRedirect(message, req) });
-    res.end();
-  }
-}
-
-async function finishOAuth(req, res, provider) {
-  const url = new URL(req.url || `/api/auth/${provider}/callback`, "http://localhost");
-  const error = url.searchParams.get("error");
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  const statePayload = verifyOAuthState(state, provider);
-
-  if (error) {
-    res.writeHead(302, { Location: buildFrontendErrorRedirect(`Sign-in cancelled: ${error}`, req) });
-    return res.end();
-  }
-
-  if (!code || !statePayload?.redirectUri) {
-    res.writeHead(302, { Location: buildFrontendErrorRedirect("Invalid OAuth state. Please try again.", req) });
-    return res.end();
-  }
-
-  try {
-    const profile =
-      provider === "google"
-        ? await exchangeGoogleCode(code, statePayload.redirectUri)
-        : await exchangeGitHubCode(code, statePayload.redirectUri);
-    const session = await findOrCreateOAuthUser(profile);
-    res.writeHead(302, { Location: buildFrontendSuccessRedirect(session.token, req) });
-    res.end();
-  } catch (oauthError) {
-    const message = oauthError instanceof Error ? oauthError.message : "OAuth sign-in failed.";
-    res.writeHead(302, { Location: buildFrontendErrorRedirect(message, req) });
-    res.end();
   }
 }
 
@@ -142,13 +79,6 @@ async function login(req, res) {
   const user = await db.collection("users").findOne({ email });
 
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
-    if (user && !user.passwordHash) {
-      const providers = (user.providers || []).map((entry) => entry.provider).filter((p) => p !== "email");
-      const hint = providers.length
-        ? `Use ${providers.join(" or ")} sign-in for this account.`
-        : "Use social sign-in for this account.";
-      return res.status(401).json({ error: `Invalid email or password. ${hint}` });
-    }
     return res.status(401).json({ error: "Invalid email or password." });
   }
 
