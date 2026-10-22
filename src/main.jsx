@@ -799,18 +799,18 @@ function Dashboard({ user, token, onLogout, initialPrompt = "", onChangeAudience
 
           {/* Section 4.5: Structured Frontend & Backend Architectural Blueprints */}
           <div id="dual-blueprints">
-            <DualBlueprintsConsole output={output} />
+            <DualBlueprintsConsole output={output} compiling={compiling} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Section 4: Symmetrical Systems HUD */}
             <div id="system-design" className="lg:col-span-8">
-              <ArchitectureMap output={output} />
+              <ArchitectureMap output={output} compiling={compiling} />
             </div>
 
             {/* Section 6: Validation Radar HUD */}
             <div id="validation-engine" className="lg:col-span-4">
-              <ValidationRadar output={output} />
+              <ValidationRadar output={output} compiling={compiling} />
             </div>
           </div>
 
@@ -818,24 +818,25 @@ function Dashboard({ user, token, onLogout, initialPrompt = "", onChangeAudience
           <div id="runtime-generator">
             <RuntimePreview
               output={output}
+              compiling={compiling}
               setPreviewPage={setMockPreviewPage}
             />
           </div>
 
           {/* Section 5.5: Full-Stack Generated Source Code & ZIP Exporter */}
           <div id="source-code">
-            <GeneratedCodeExplorer output={output} />
+            <GeneratedCodeExplorer output={output} compiling={compiling} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Section 7: Symmetrical File Modules */}
             <div id="projects" className="lg:col-span-7">
-              <RecentProjects output={output} onCompilePrompt={setPrompt} />
+              <RecentProjects output={output} compiling={compiling} onCompilePrompt={setPrompt} />
             </div>
 
             {/* Section 8: Live Chronological Timelines */}
             <div id="repair-engine" className="lg:col-span-5">
-              <AIActivityTimeline output={output} compiling={compiling} />
+              <AIActivityTimeline output={output} compiling={compiling} currentTask={currentCompileTask} />
             </div>
           </div>
 
@@ -1560,7 +1561,7 @@ class ArchitectureSceneBoundary extends React.Component {
   render() { return this.state.failed ? <div className="scene-error-fallback">Interactive 3D is unavailable in this browser. The blueprint details remain available below.</div> : this.props.children; }
 }
 
-function ArchitectureMap({ output }) {
+function ArchitectureMap({ output, compiling }) {
   const [selectedNode, setSelectedNode] = useState(null);
   const [show3D, setShow3D] = useState(false);
   const schemas = output?.schemas || {};
@@ -1592,14 +1593,24 @@ function ArchitectureMap({ output }) {
           </div>
           <div className="architecture-result-detail" aria-live="polite"><strong>{activeNode?.label || "Compilation overview"}</strong><span>{activeNode?.detail || `${tables.length} data tables · ${endpoints.length} API endpoints · ${pages.length} UI pages · ${roles.length} access roles`}</span></div>
         </>
+      ) : compiling ? (
+        <div className="architecture-empty-state compiling">
+          <Loader2 size={24} className="animate-spin text-indigo-400" />
+          <strong>Synthesizing Architecture Map…</strong>
+          <span>Extracting domain entities, data models, and system topology.</span>
+        </div>
       ) : (
-        <div className="architecture-empty-state"><Network size={21} /><strong>Your architecture will appear here</strong><span>Describe an application above and compile it to inspect the actual generated structures.</span></div>
+        <div className="architecture-empty-state">
+          <Network size={22} className="text-indigo-400" />
+          <strong>Your architecture will appear here</strong>
+          <span>Describe an application above and compile it to inspect the actual generated structures.</span>
+        </div>
       )}
     </motion.section>
   );
 }
 
-function ValidationRadar({ output }) {
+function ValidationRadar({ output, compiling }) {
   const errors = output?.validation?.errors || [];
   const warnings = output?.validation?.warnings || [];
   const checks = output?.runtime?.checks || [];
@@ -1619,12 +1630,24 @@ function ValidationRadar({ output }) {
           {summaries.map((item) => <div className="validation-summary-row" key={item.label}><span>{item.label}</span><strong className={item.tone}>{item.value}</strong></div>)}
           {errors.length > 0 && <div className="validation-issues"><strong>Issues to review</strong>{errors.slice(0, 3).map((error, index) => <p key={`${index}-${String(error).slice(0, 24)}`}>{typeof error === "string" ? error : error.message || JSON.stringify(error)}</p>)}</div>}
         </div>
-      ) : <div className="validation-empty-state">Compile an idea to see schema and runtime validation details.</div>}
+      ) : compiling ? (
+        <div className="validation-empty-state compiling">
+          <Loader2 size={22} className="animate-spin text-amber-400" />
+          <strong>Running Validation Radar…</strong>
+          <span>Evaluating cross-layer integrity and schema invariants.</span>
+        </div>
+      ) : (
+        <div className="validation-empty-state">
+          <ShieldCheck size={22} className="text-slate-500" />
+          <strong>Validation Idle</strong>
+          <span>Compile an idea to see schema and runtime validation details.</span>
+        </div>
+      )}
     </section>
   );
 }
 
-function RuntimePreview({ output, setPreviewPage }) {
+function RuntimePreview({ output, compiling, setPreviewPage }) {
   const cards = output?.schemas?.ui_schema?.pages || [];
 
   function handleDownloadConfig() {
@@ -1732,13 +1755,27 @@ function RuntimePreview({ output, setPreviewPage }) {
             </div>
           </motion.div>
         ))}
-        {cards.length === 0 && <div className="architecture-empty-state col-span-full"><Eye size={20} /><strong>No generated pages yet</strong><span>Compile an application idea to preview pages from its UI schema.</span></div>}
+        {cards.length === 0 && (
+          compiling ? (
+            <div className="architecture-empty-state col-span-full compiling">
+              <Loader2 size={24} className="animate-spin text-cyan-400" />
+              <strong>Generating Interface Sandbox…</strong>
+              <span>Synthesizing live UI schema components and route definitions.</span>
+            </div>
+          ) : (
+            <div className="architecture-empty-state col-span-full">
+              <Eye size={22} className="text-indigo-400" />
+              <strong>No generated pages yet</strong>
+              <span>Compile an application idea to preview pages from its UI schema.</span>
+            </div>
+          )
+        )}
       </div>
     </motion.section>
   );
 }
 
-function GeneratedCodeExplorer({ output }) {
+function GeneratedCodeExplorer({ output, compiling }) {
   const project = output?.project;
   const files = project?.files || {};
   const fileKeys = Object.keys(files);
@@ -1754,6 +1791,22 @@ function GeneratedCodeExplorer({ output }) {
       }
     }
   }, [project]);
+
+  if (compiling) {
+    return (
+      <section className="glass-card-saas rounded-2xl p-6 text-left space-y-4">
+        <div className="flex items-center gap-2">
+          <Code2 className="w-5 h-5 text-indigo-400" />
+          <h3 className="text-lg font-bold text-white">Full-Stack Source Code & Project Files</h3>
+        </div>
+        <div className="architecture-empty-state compiling">
+          <Loader2 size={26} className="animate-spin text-indigo-400" />
+          <strong>Generating Full-Stack Source Code…</strong>
+          <span>Synthesizing React components, Express routers, Mongoose models, and configuration files.</span>
+        </div>
+      </section>
+    );
+  }
 
   if (!output || !project) {
     return (
@@ -1919,7 +1972,7 @@ function GeneratedCodeExplorer({ output }) {
   );
 }
 
-function RecentProjects({ output, onCompilePrompt }) {
+function RecentProjects({ output, compiling, onCompilePrompt }) {
   return (
     <motion.section
       initial={{ opacity: 0, y: 15 }}
@@ -1973,7 +2026,19 @@ function RecentProjects({ output, onCompilePrompt }) {
             </div>
             <div className="mt-4 flex justify-end"><button type="button" onClick={() => onCompilePrompt(output.input || "")} className="button-quiet min-h-9 text-[10px]">Reuse this prompt<ArrowRight size={14} /></button></div>
           </motion.div>
-        ) : <div className="architecture-empty-state"><Blocks size={20} /><strong>No compilation in this session</strong><span>Your result will stay here while this tab is open. Saved project history is not enabled.</span></div>}
+        ) : compiling ? (
+          <div className="architecture-empty-state compiling">
+            <Loader2 size={22} className="animate-spin text-indigo-400" />
+            <strong>Compiling Active Session…</strong>
+            <span>Telemetry data and project summaries will update upon completion.</span>
+          </div>
+        ) : (
+          <div className="architecture-empty-state">
+            <Blocks size={22} className="text-indigo-400" />
+            <strong>No compilation in this session</strong>
+            <span>Your result will stay here while this tab is open. Saved project history is not enabled.</span>
+          </div>
+        )}
       </div>
     </motion.section>
   );
@@ -2005,7 +2070,12 @@ function AIActivityTimeline({ output, compiling, currentTask }) {
 
       <div className="glass-panel-ai rounded-2xl p-5 border border-cyan-500/10 h-[calc(100%-40px)] flex flex-col justify-between bg-slate-950/40">
         <div className="space-y-4.5 overflow-y-auto max-h-[300px] custom-scrollbar pr-2">
-          {compiling && <div className="flex items-center gap-3 rounded-lg border border-blue-400/15 bg-blue-400/5 p-4 text-xs text-blue-100"><Loader2 size={16} className="animate-spin" /><span>{currentTask || "Compilation in progress"}</span></div>}
+          {compiling && (
+            <div className="flex items-center gap-3 rounded-xl border border-cyan-400/25 bg-cyan-500/10 p-4 text-xs text-cyan-100 shadow-inner">
+              <Loader2 size={16} className="animate-spin text-cyan-400 flex-shrink-0" />
+              <span className="font-semibold">{currentTask || "Compilation in progress…"}</span>
+            </div>
+          )}
           {!compiling && activities.map((item, idx) => (
             <motion.div
               key={idx}
@@ -2031,7 +2101,13 @@ function AIActivityTimeline({ output, compiling, currentTask }) {
               </div>
             </motion.div>
           ))}
-          {!compiling && activities.length === 0 && <div className="architecture-empty-state"><Activity size={19} /><strong>No stage timings yet</strong><span>Compile an idea to see the stages returned by the compiler.</span></div>}
+          {!compiling && activities.length === 0 && (
+            <div className="architecture-empty-state">
+              <Activity size={22} className="text-cyan-400" />
+              <strong>No stage timings yet</strong>
+              <span>Compile an idea to see the stages returned by the compiler.</span>
+            </div>
+          )}
         </div>
       </div>
     </motion.section>
@@ -2068,7 +2144,13 @@ function SystemAnalytics({ output }) {
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">{facts.map((fact) => <div className="compilation-fact-card" key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></div>)}</div>
       {output && stageTimings.length > 0 && <div className="stage-timing-list">{stageTimings.map((stage) => <div className="stage-timing-row" key={stage.name}><span>{stage.name}</span><span>{Number.isFinite(stage.ms) ? `${stage.ms} ms` : "Not reported"}</span></div>)}</div>}
-      {!output && <div className="architecture-empty-state"><Gauge size={19} /><strong>No compilation metrics yet</strong><span>Measured stage details appear here after a compile.</span></div>}
+      {!output && (
+        <div className="architecture-empty-state">
+          <Gauge size={22} className="text-indigo-400" />
+          <strong>No compilation metrics yet</strong>
+          <span>Measured stage details appear here after a compile.</span>
+        </div>
+      )}
     </motion.section>
   );
 }
@@ -2516,7 +2598,7 @@ function LoadingScreen() {
   );
 }
 
-function DualBlueprintsConsole({ output }) {
+function DualBlueprintsConsole({ output, compiling }) {
   const [activeTab, setActiveTab] = useState("frontend");
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [selectedEndpoint, setSelectedEndpoint] = useState(null);
@@ -2526,6 +2608,22 @@ function DualBlueprintsConsole({ output }) {
   const frontend = blueprints?.frontend;
   const backend = blueprints?.backend;
   const validation = blueprints?.validation;
+
+  if (compiling) {
+    return (
+      <section className="glass-card-saas rounded-2xl p-6 text-left space-y-4">
+        <div className="flex items-center gap-2">
+          <Layers3 className="w-5 h-5 text-indigo-400" />
+          <h3 className="text-lg font-bold text-white">Frontend & Backend Blueprints</h3>
+        </div>
+        <div className="architecture-empty-state compiling">
+          <Loader2 size={26} className="animate-spin text-indigo-400" />
+          <strong>Synthesizing Blueprints…</strong>
+          <span>AI compiler is generating structured UI specifications, API routes, and database models.</span>
+        </div>
+      </section>
+    );
+  }
 
   if (!output || !blueprints) {
     return (
