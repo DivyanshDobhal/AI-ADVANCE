@@ -13,20 +13,31 @@
     },
     "api/auth.js": {
       "maxDuration": 30
+    },
+    "api/health.js": {
+      "maxDuration": 15
     }
   },
   "rewrites": [
     {
       "source": "/api/auth/(.*)",
-      "destination": "/api/auth"
+      "destination": "/api/auth?action=$1"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/health"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/health"
     },
     {
       "source": "/health/llm",
-      "destination": "/api/generate"
+      "destination": "/api/health"
     },
     {
       "source": "/api/health/llm",
-      "destination": "/api/generate"
+      "destination": "/api/health"
     }
   ]
 }

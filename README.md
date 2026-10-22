@@ -1,175 +1,122 @@
 # AI Software Compiler
 
-Natural language -> structured intermediate representation -> validated schemas -> executable runtime preview.
+**Natural language or JSON specification ➔ Intent Extraction ➔ System Design ➔ Schema Generation ➔ Validation & Repair ➔ Full-Stack Code Generation (React + Express + MongoDB) ➔ Runtime Simulation & ZIP Export.**
 
-This project is a compact compiler-style system for software generation. It is intentionally built as a reliability/control problem instead of a single prompt demo.
+An enterprise-grade AI software compiler built with a modular dual-provider AI engine (**Google Gemini** + **Groq**), persistent **MongoDB** data storage, secure local email/password authentication (Google & GitHub OAuth removed), and automatic cross-layer validation.
 
-## What It Builds
+---
 
-- Multi-stage generation pipeline
-- Strict app configuration with UI, API, DB, auth, and business logic schemas
-- Cross-layer validator
-- Targeted repair engine
-- Runtime simulator that boots routes, API resources, auth metadata, and in-memory DB tables
-- Evaluation framework with 20 test prompts and metrics
-- Browser UI for entering new prompts and inspecting JSON output
+## Key Features
 
-## Deploy on Vercel (production)
+1. **Dual AI Provider Architecture**:
+   - **Google Gemini**: Uses the official `@google/genai` SDK and Google Generative Language API (`GEMINI_MODEL`, default `gemini-2.5-flash`).
+   - **Groq Cloud**: Uses the official `groq-sdk` for ultra-low latency Llama-3.3 generation (`GROQ_MODEL`, default `llama-3.3-70b-versatile`).
+   - **Configurable Routing & Fallback**: `AI_PROVIDER=auto` tries Gemini as primary, automatically falling back to Groq upon recoverable error (rate limits, timeouts), and cleanly falling back to the deterministic engine when no API keys are configured.
 
-This app is built for [Vercel](https://vercel.com) only. The frontend is a static Vite build; APIs run as serverless functions (`api/auth.js`, `api/compile.js`, `api/generate.py`).
+2. **Full-Stack Source Code Generation**:
+   - **Frontend**: Runnable React 18 + Vite + Tailwind CSS application complete with navigation, auth context, responsive CRUD data tables, forms, and API client.
+   - **Backend**: Complete Node.js + Express REST API server with JWT authentication, role-based access control (RBAC), input validation, error handling, and health check endpoints.
+   - **Database**: Mongoose models with field types, indexes, and initialization seed script.
+   - **Export as ZIP**: In-browser client-side ZIP packaging using `JSZip` to download the entire generated application codebase.
 
-### 1. Connect GitHub
+3. **Secure Authentication & Persistent Sessions**:
+   - Google Sign-In and GitHub Sign-In removed completely.
+   - Local authentication using email and password with PBKDF2 salt-hashed passwords.
+   - Persistent sessions in MongoDB with rate limiting and secure session management.
 
-1. Push the repo to [github.com/DivyanshDobhal/ai-software-compiler](https://github.com/DivyanshDobhal/ai-software-compiler).
-2. In the [Vercel dashboard](https://vercel.com/new), choose **Import Git Repository** and select that repo.
-3. Vercel will detect `vercel.json` — leave **Build Command** as `npm run build` and **Output Directory** as `dist`.
+4. **MongoDB Persistence**:
+   - Connection pooling across serverless invocations (`MONGODB_URI`, `MONGODB_DB_NAME`).
+   - Resilient in-memory fallback mode so the application remains operable even during database network interruptions.
+   - Unified health check endpoint (`/api/health`) reporting database latency without leaking credentials.
 
-### 2. Environment variables
+5. **Cross-Layer Validation & Automatic Repair**:
+   - Validates that every frontend UI page and API dependency has a corresponding backend REST endpoint.
+   - Verifies that all endpoints map to real database models and schema attributes.
+   - Self-healing repair engine that resolves schema discrepancies.
 
-In the Vercel project → **Settings → Environment Variables**, add:
+---
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `APP_URL` | Yes (for OAuth) | Production URL, e.g. `https://ai-software-compiler-seven.vercel.app` |
-| `MONGODB_URI` | Yes (for auth) | MongoDB Atlas connection string |
-| `GEMINI_API_KEY` | Yes (for AI generation) | Google Gemini API key |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | For Google sign-in | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | For GitHub sign-in | [GitHub Developer Settings](https://github.com/settings/developers) |
-| `OAUTH_STATE_SECRET` | Recommended | Random string used to sign OAuth state |
-| `AUTH_TOKEN_TTL_DAYS` | No | Session lifetime (default: 7) |
+## Target Deployment: Vercel & Node.js
 
-### OAuth redirect URLs
+- **Frontend**: Vite SPA built to `dist`.
+- **Serverless API Routes**:
+  - `api/compile.js`: Main compilation pipeline with AI provider routing, validation, and codegen.
+  - `api/auth.js`: Registration, login, logout, session verification, rate-limited auth.
+  - `api/health.js`: Live health check for MongoDB and AI provider connectivity.
 
-Register these callback URLs in Google and GitHub:
+---
 
-- `https://<your-domain>/api/auth/google/callback`
-- `https://<your-domain>/api/auth/github/callback`
+## Environment Configuration
 
-Redeploy after adding variables.
+Create a `.env` or `.env.local` file (see `.env.example`):
 
-### 3. Deploy
+```dotenv
+# Environment
+NODE_ENV=development
+APP_URL=http://localhost:5173
 
-Every push to `main` triggers a production deployment. The live URL will look like `https://ai-software-compiler.vercel.app`.
+# AI Provider Selection: "auto" | "gemini" | "groq" | "local"
+AI_PROVIDER=auto
 
-Run the offline evaluation suite (no server required):
+# Google Gemini
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash
 
+# Groq Cloud
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=llama-3.3-70b-versatile
+
+# MongoDB Atlas
+MONGODB_URI=mongodb+srv://<db_user>:<db_password>@cluster0.nhewmy8.mongodb.net/?retryWrites=true&w=majority
+MONGODB_DB_NAME=ai_software_compiler
+
+# Sessions & Token Lifetime
+AUTH_TOKEN_TTL_DAYS=7
+```
+
+---
+
+## Local Development & Testing
+
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Run Test Suite
+Runs auth security tests, provider error handling, cross-layer audits, and 20 evaluation benchmarks:
 ```bash
 npm test
 ```
 
-## Architecture
-
-The core system lives in `src/compiler.js`.
-
-1. **Intent Extraction**
-   Parses the user prompt into a structured IR:
-   - app name
-   - app type
-   - features
-   - roles
-   - business rules
-   - assumptions
-   - ambiguities
-
-2. **System Design Layer**
-   Converts intent into architecture:
-   - entities
-   - fields
-   - relationships
-   - user flows
-   - access-control matrix
-
-3. **Schema Generation**
-   Emits strict executable configuration:
-   - `ui_schema`
-   - `api_schema`
-   - `db_schema`
-   - `auth_schema`
-   - `business_logic`
-
-4. **Validation + Repair**
-   Detects:
-   - missing required layers
-   - empty schema sections
-   - API resources without DB tables
-   - UI/API role mismatches
-   - UI pages depending on missing endpoints
-   - hallucinated API fields
-   - business rules pointing at missing entities
-
-   Repairs are targeted. For example, a hallucinated API body field is removed from the exact endpoint body schema; the full app is not blindly regenerated.
-
-5. **Runtime Execution**
-   Simulates a generated app by:
-   - mounting routes
-   - initializing in-memory tables
-   - executing POST endpoints with generated records
-   - checking auth roles
-   - confirming UI pages have components and access metadata
-
-## Determinism
-
-The demo implementation is deterministic and local by design:
-
-- same prompt -> same configuration
-- no network dependency
-- no stochastic model output
-- no invalid JSON
-
-In production, an LLM can be inserted inside each stage, but the validator, repair engine, and runtime simulator should remain the control plane.
-
-## Evaluation
-
-The evaluation suite is in `src/evaluation.js`.
-
-Dataset:
-
-- 10 realistic product prompts
-- 10 edge-case prompts covering vague, conflicting, incomplete, and risky requirements
-
-Tracked metrics:
-
-- success rate
-- latency
-- repairs per request
-- failure types
-- runtime pass/fail
-- cost/quality tradeoff
-
-Current local result:
-
-```txt
-20/20 passing
-100% success rate
-5 auto-repaired cases
-0 final validation failures
+### 3. Run Production Build
+```bash
+npm run build
 ```
 
-## Cost vs Quality Tradeoff
+### 4. Start Local Dev Server
+```bash
+npm run dev
+```
 
-This version favors reliability and latency over open-ended creativity:
+---
 
-- Cost: zero per compile in local deterministic mode
-- Latency: very low
-- Quality: strong for common SaaS/product patterns
-- Limitation: less flexible than a high-quality LLM for novel domains
+## MongoDB Atlas Configuration
 
-A production version should use LLM calls for semantic richness, but only behind:
+1. In MongoDB Atlas, create a database user under **Database Access**.
+2. Under **Network Access**, ensure `0.0.0.0/0` is allowed to permit Vercel's distributed serverless IP addresses to connect.
+3. Configure `MONGODB_URI` and `MONGODB_DB_NAME` in your Vercel Project Settings.
 
-- structured output contracts
-- per-stage validation
-- partial regeneration
-- cross-layer consistency checks
-- runtime execution checks
+---
 
-## Submission Notes
+## Deploying to Vercel
 
-For a Loom walkthrough, cover:
-
-1. The browser prompt-to-runtime flow
-2. Why the pipeline is split into stages
-3. How validation catches cross-layer failures
-4. How targeted repair works
-5. How the runtime proves execution awareness
-6. Evaluation metrics and cost/quality tradeoffs
-
+1. Push your repository to GitHub: `https://github.com/DivyanshDobhal/AI-ADVANCE`.
+2. Connect your repository in Vercel.
+3. Add the environment variables:
+   - `GEMINI_API_KEY`
+   - `GROQ_API_KEY`
+   - `MONGODB_URI`
+   - `MONGODB_DB_NAME`
+   - `AI_PROVIDER` (e.g. `auto`)
+4. Trigger deployment.

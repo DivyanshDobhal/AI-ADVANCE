@@ -10,8 +10,8 @@ logger = logging.getLogger("main")
 
 app = FastAPI(
     title="AI Compiler Studio Backend",
-    description="FastAPI-based multi-agent compiler backend utilizing Google Gemini API",
-    version="1.0.0"
+    description="FastAPI-based multi-agent compiler backend utilizing Gemini and Groq",
+    version="2.0.0"
 )
 
 # Configure CORS so Vite frontend on port 5173 (or others) can connect seamlessly
@@ -33,64 +33,41 @@ def startup_verification():
         logger.info("Running on Vercel — skipping local startup verification.")
         return
 
-    logger.info("==================================================")
-    logger.info("Initializing Startup Verification Tests for Gemini Integration...")
-    
-    # 1. Verify API Key exists
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        logger.error("Startup Verification Failure: GEMINI_API_KEY is not configured in .env!")
-        logger.info("==================================================")
-        return
-    logger.info("Startup Verification: GEMINI_API_KEY detected in environment.")
-
-    # 2. Verify Gemini connection and selected models exist
+    logger.info("Initializing startup verification for Gemini and Groq integration.")
     from services.gemini_service import GeminiService
-    
-    logger.info("Testing connection to primary model: gemini-2.5-flash...")
-    flash_ok = GeminiService.test_connection("gemini-2.5-flash")
-    if flash_ok:
-        logger.info("Startup Verification Success: gemini-2.5-flash is ONLINE and responsive.")
-    else:
-        logger.error("Startup Verification Failure: gemini-2.5-flash is OFFLINE or unsupported!")
+    from services.groq_service import GroqService
 
-    logger.info("Testing connection to fallback model: gemini-2.5-pro...")
-    pro_ok = GeminiService.test_connection("gemini-2.5-pro")
-    if pro_ok:
-        logger.info("Startup Verification Success: gemini-2.5-pro is ONLINE and responsive.")
-    else:
-        logger.error("Startup Verification Failure: gemini-2.5-pro is OFFLINE or unsupported!")
-        
-    logger.info("==================================================")
+    if os.getenv("GEMINI_API_KEY"):
+        if GeminiService.test_connection():
+            logger.info("Gemini provider is online and responsive.")
+        else:
+            logger.warning("Gemini provider check failed or rate limited.")
+
+    if os.getenv("GROQ_API_KEY"):
+        if GroqService.test_connection():
+            logger.info("Groq provider is online and responsive.")
+        else:
+            logger.warning("Groq provider check failed.")
 
 @app.get("/health/llm")
 def health_llm():
-    """
-    Dynamically tests the connectivity to the Gemini models and reports back availability.
-    """
+    """Check connectivity to configured AI providers (Gemini & Groq)."""
     from services.gemini_service import GeminiService
-    
-    # First test primary model
-    if GeminiService.test_connection("gemini-2.5-flash"):
-        return {
-            "provider": "Gemini",
-            "model": "gemini-2.5-flash",
-            "status": "online"
-        }
-    
-    # Fallback status report
-    if GeminiService.test_connection("gemini-2.5-pro"):
-        return {
-            "provider": "Gemini",
-            "model": "gemini-2.5-pro",
-            "status": "online"
-        }
-        
+    from services.groq_service import GroqService
+
+    has_gemini = bool(os.getenv("GEMINI_API_KEY"))
+    has_groq = bool(os.getenv("GROQ_API_KEY"))
+
+    gemini_online = GeminiService.test_connection() if has_gemini else False
+    groq_online = GroqService.test_connection() if has_groq else False
+
     return {
-        "provider": "Gemini",
-        "model": "gemini-2.5-flash",
-        "status": "offline",
-        "error": "All Gemini models are offline"
+        "status": "online" if (gemini_online or groq_online) else "degraded",
+        "configured_provider": os.getenv("AI_PROVIDER", "auto"),
+        "providers": {
+            "gemini": {"configured": has_gemini, "online": gemini_online},
+            "groq": {"configured": has_groq, "online": groq_online}
+        }
     }
 
 @app.get("/")

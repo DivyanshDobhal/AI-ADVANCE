@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AnimatePresence, motion } from "motion/react";
+import LandingExperience from "./landing.jsx";
+import { createProjectZip } from "./codegen.js";
 import {
   Activity,
   AlertCircle,
@@ -13,6 +15,8 @@ import {
   Code2,
   Cpu,
   Database,
+  BookOpen,
+  Network,
   GitPullRequest,
   Gauge,
   KeyRound,
@@ -42,6 +46,8 @@ import {
   Music2
 } from "lucide-react";
 import "./index.css";
+
+const ArchitectureScene = lazy(() => import("./architecture-scene.jsx"));
 
 // Custom SVG Brand Icons to bypass lucide-react brand icon deprecations
 function Facebook({ size = 16, className = "" }) {
@@ -134,29 +140,83 @@ function App() {
   const [token, setToken] = useState(() => localStorage.getItem("compiler_auth_token") || "");
   const [restoring, setRestoring] = useState(true);
   const [showConsole, setShowConsole] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
+  const [authMode, setAuthMode] = useState("login");
+  const [draftPrompt, setDraftPrompt] = useState("");
+  const [experienceSetupRequest, setExperienceSetupRequest] = useState(0);
+  const [experienceProfile, setExperienceProfile] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("compiler_experience_profile") || "null"); } catch { return null; }
+  });
+  const [authNotice, setAuthNotice] = useState("");
 
   useEffect(() => {
-    if (!token) {
+    const initialToken = localStorage.getItem("compiler_auth_token") || "";
+    if (!initialToken) {
       setRestoring(false);
       return;
     }
 
-    apiRequest("/api/auth/me", { token })
-      .then((data) => setUser(data.user))
-      .catch(() => {
+    apiRequest("/api/auth/me", { token: initialToken })
+      .then((data) => {
+        if (!data?.user) throw new Error("Invalid session data");
+        localStorage.setItem("compiler_user", JSON.stringify(data.user));
+        setUser(data.user);
+        if (data.user.experienceProfile) {
+          setExperienceProfile(data.user.experienceProfile);
+          localStorage.setItem("compiler_experience_profile", JSON.stringify(data.user.experienceProfile));
+        }
+      })
+      .catch((err) => {
+        console.warn("Session restore failed:", err);
         localStorage.removeItem("compiler_auth_token");
         localStorage.removeItem("compiler_user");
         setToken("");
+        setUser(null);
       })
       .finally(() => setRestoring(false));
-  }, [token]);
+  }, []);
 
   function handleAuthenticated(nextToken, nextUser) {
     localStorage.setItem("compiler_auth_token", nextToken);
     localStorage.setItem("compiler_user", JSON.stringify(nextUser));
     setToken(nextToken);
     setUser(nextUser);
+    if (nextUser.experienceProfile) {
+      setExperienceProfile(nextUser.experienceProfile);
+      localStorage.setItem("compiler_experience_profile", JSON.stringify(nextUser.experienceProfile));
+    } else if (experienceProfile?.audience) {
+      apiRequest("/api/auth/preferences", {
+        method: "PUT",
+        token: nextToken,
+        body: JSON.stringify({ experienceProfile })
+      }).then(({ experienceProfile: savedProfile }) => {
+        setExperienceProfile(savedProfile);
+        setUser((current) => current ? { ...current, experienceProfile: savedProfile } : current);
+        localStorage.setItem("compiler_experience_profile", JSON.stringify(savedProfile));
+      }).catch(() => {});
+    }
+    setShowAuth(false);
     setShowConsole(true);
+  }
+
+  function openSignIn(mode = "login") {
+    setAuthMode(mode);
+    setShowAuth(true);
+  }
+
+  function beginBuilding(prompt) {
+    setDraftPrompt(prompt || "");
+    if (user && token) {
+      setShowConsole(true);
+      return;
+    }
+    openSignIn("register");
+  }
+
+  function requestExperienceSetup() {
+    setShowConsole(false);
+    setShowAuth(false);
+    setExperienceSetupRequest((current) => current + 1);
   }
 
   async function handleLogout() {
@@ -173,25 +233,17 @@ function App() {
 
   if (restoring) return <LoadingScreen />;
 
-  return (
-    <main className="relative w-full min-h-[115vh] overflow-x-hidden flex flex-col items-center font-sans selection:bg-white/20 selection:text-white">
-      <video
-        className="fixed inset-0 w-full h-full object-cover z-[0]"
-        autoPlay
-        loop
-        muted
-        playsInline
-        src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260429_114316_1c7889ad-2885-410e-b493-98119fee0ddb.mp4"
-      />
+  const isPublicLanding = !showConsole && !showAuth;
 
-      {/* Dark tint overlay */}
-      <div className="fixed inset-0 bg-slate-950/45 z-[1] pointer-events-none" />
+  return (
+    <div className="relative w-full min-h-svh overflow-x-hidden flex flex-col items-center font-sans selection:bg-white/20 selection:text-white">
+      <div className="studio-backdrop" aria-hidden="true" />
 
       {/* Main Content Container */}
-      <div className="relative z-10 w-full max-w-7xl px-4 md:px-8 pt-12 pb-16 flex-1 flex flex-col justify-between items-center">
+      <div className={`relative z-10 w-full ${showConsole ? "max-w-none px-0 py-0" : isPublicLanding ? "max-w-none px-0 py-0" : "max-w-7xl px-4 md:px-8 pt-6 md:pt-8 pb-8"} ${!showConsole && !isPublicLanding ? "flex-1 flex flex-col items-center" : ""}`}>
         
         {/* Brand Top Header */}
-        <header className="w-full flex items-center justify-between mb-16 select-none">
+        {!showConsole && !isPublicLanding && <header className="w-full flex items-center justify-between mb-8 md:mb-10 select-none">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center shadow-glow-cyan">
               <Sparkles className="w-5 h-5 text-white" />
@@ -203,19 +255,13 @@ function App() {
 
           {user && token && (
             <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={() => setShowConsole(!showConsole)}
-                className="px-4 py-2 border border-cyan-400/40 bg-slate-950/60 rounded-xl text-[10px] font-bold font-mono uppercase tracking-widest text-cyan-300 hover:bg-cyan-500/10 transition shadow-glow-cyan"
-              >
-                {showConsole ? "SHOW LANDING VIEW" : "LAUNCH COMPILER COGNITIVE HUD"}
-              </button>
+              <button type="button" onClick={requestExperienceSetup} className="button-quiet">Personalize experience</button>
             </div>
           )}
-        </header>
+        </header>}
 
         {/* Dynamic Inner Workspace / Upper CTA */}
-        <div className="w-full flex-1 flex items-center justify-center mb-24">
+        <div className={`${showConsole || isPublicLanding ? "w-full" : "w-full flex-1 flex items-center justify-center mb-8 md:mb-12"}`}>
           <AnimatePresence mode="wait">
             {showConsole && user && token ? (
               <motion.div
@@ -226,43 +272,25 @@ function App() {
                 transition={{ duration: 0.4 }}
                 className="w-full"
               >
-                <Dashboard user={user} token={token} onLogout={handleLogout} />
+                <Dashboard user={user} token={token} onLogout={handleLogout} initialPrompt={draftPrompt} onChangeAudience={requestExperienceSetup} experienceProfile={experienceProfile} />
               </motion.div>
-            ) : !showConsole && user && token ? (
-              /* Upper CTA Landing viewport */
+            ) : isPublicLanding ? (
               <motion.div
-                key="landing-cta"
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -30 }}
-                className="max-w-2xl text-center space-y-6 bg-slate-950/65 p-8 rounded-[2rem] border border-cyan-500/10 backdrop-blur-md"
+                key="public-landing"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="w-full"
               >
-                <div className="flex justify-center">
-                  <span className="bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 px-3.5 py-1.5 rounded-full text-[10px] font-bold font-mono tracking-widest uppercase text-cyan-300 pulse-slow">
-                    ⚡ SYSTEM DEPLOYMENT READY
-                  </span>
-                </div>
-
-                <div className="space-y-3">
-                  <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white uppercase font-mono">
-                    AI COMPILER STUDIO
-                  </h1>
-                  <p className="text-slate-400 text-xs font-mono uppercase tracking-widest leading-relaxed">
-                    Compile natural language ideas into type-safe server networks and database blueprints. Immersive sandboxed runtimes powered by Gemini core plane.
-                  </p>
-                </div>
-
-                <div className="pt-4">
-                  <motion.button
-                    type="button"
-                    onClick={() => setShowConsole(true)}
-                    className="group relative px-10 py-4.5 rounded-2xl bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 text-white font-black font-mono text-xs uppercase tracking-widest shadow-glow-cyan transition"
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    LAUNCH OPERATING SYSTEM CONSOLE
-                  </motion.button>
-                </div>
+                <LandingExperience
+                  user={user}
+                  token={token}
+                  experienceProfile={experienceProfile}
+                  onProfileChange={setExperienceProfile}
+                  setupRequest={experienceSetupRequest}
+                  onSignIn={openSignIn}
+                  onStartBuilding={beginBuilding}
+                />
               </motion.div>
             ) : (
               /* Auth console */
@@ -273,22 +301,20 @@ function App() {
                 exit={{ opacity: 0, scale: 0.98 }}
                 className="w-full"
               >
-                <AuthExperience onAuthenticated={handleAuthenticated} />
+                <AuthExperience onAuthenticated={handleAuthenticated} initialNotice={authNotice} initialMode={authMode} onBack={() => setShowAuth(false)} />
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Symmetrical Footers */}
-        <StudioFooter />
-
+        {/* Keep the full marketing footer on the public landing, and the compact app shell in the workspace. */}
       </div>
-    </main>
+    </div>
   );
 }
 
-function AuthExperience({ onAuthenticated, initialNotice = "" }) {
-  const [mode, setMode] = useState("login");
+function AuthExperience({ onAuthenticated, initialNotice = "", initialMode = "login", onBack }) {
+  const [mode, setMode] = useState(initialMode);
 
   const features = [
     { icon: Cpu, label: "AI Architecture Generation", desc: "Transforms custom descriptions into robust system designs" },
@@ -300,50 +326,36 @@ function AuthExperience({ onAuthenticated, initialNotice = "" }) {
 
   return (
     <motion.main
-      className="relative min-h-screen text-white flex flex-col justify-center items-center"
+      className="relative w-full text-white flex flex-col justify-center items-center"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
       <AnimatedBackground />
 
-      <div className="w-full max-w-7xl px-6 md:px-8 py-12 md:py-20 z-10">
-        {/* Brand Header */}
-        <motion.div
-          className="flex items-center gap-3.5 mb-16 justify-center lg:justify-start"
-          initial={{ opacity: 0, y: -15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
-          <span className="text-xl font-bold tracking-tight text-white uppercase font-sans">
-            AI Compiler Studio
-          </span>
-        </motion.div>
-
+      <div className="w-full max-w-7xl px-4 sm:px-6 md:px-8 py-6 md:py-10 z-10">
+        <button type="button" className="auth-back-link" onClick={onBack}><ArrowRight size={15} className="rotate-180" />Back to home</button>
         {/* Two-Column Split Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-14 items-center">
           
           {/* Left Column: Product Message & Features */}
           <motion.div
-            className="lg:col-span-6 space-y-10 text-center lg:text-left"
+            className="lg:col-span-6 space-y-7 text-center lg:text-left"
             initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1, duration: 0.6 }}
           >
             <div className="space-y-4">
-              <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight leading-none text-white font-sans max-w-xl mx-auto lg:mx-0">
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.05] text-white font-sans max-w-xl mx-auto lg:mx-0">
                 Turn Ideas Into <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Production-Ready</span> Applications
               </h1>
-              <p className="text-slate-400 text-sm sm:text-base leading-relaxed max-w-lg mx-auto lg:mx-0">
+              <p className="text-slate-300/80 text-sm sm:text-base leading-relaxed max-w-lg mx-auto lg:mx-0">
                 Generate architecture, APIs, schemas, validation passes and runtime previews from a single product description.
               </p>
             </div>
 
             {/* Feature Cards List */}
-            <div className="space-y-4 max-w-xl mx-auto lg:mx-0">
+            <div className="space-y-3 max-w-xl mx-auto lg:mx-0">
               {features.map((feature, i) => (
                 <FeatureCard key={i} feature={feature} index={i} />
               ))}
@@ -457,7 +469,7 @@ function AuthCard({ mode, setMode, onAuthenticated, initialNotice = "" }) {
 
   return (
     <motion.div
-      className="glass-card-saas w-full max-w-[480px] rounded-3xl p-8 sm:p-10 shadow-premium relative flex flex-col"
+      className="glass-card-saas w-full max-w-[460px] rounded-3xl p-6 sm:p-8 shadow-premium relative flex flex-col"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.2, duration: 0.5 }}
@@ -624,9 +636,10 @@ function StatusMessage({ message }) {
   );
 }
 
-function Dashboard({ user, token, onLogout }) {
+function Dashboard({ user, token, onLogout, initialPrompt = "", onChangeAudience, experienceProfile }) {
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
-  const [prompt, setPrompt] = useState(examples[0]);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [prompt, setPrompt] = useState(() => initialPrompt || examples[0]);
   const [output, setOutput] = useState(null);
   const [compiling, setCompiling] = useState(false);
   const [compilationProgress, setCompilationProgress] = useState(0);
@@ -635,38 +648,26 @@ function Dashboard({ user, token, onLogout }) {
   const [mockPreviewPage, setMockPreviewPage] = useState(null);
   const [simulatedSpeech, setSimulatedSpeech] = useState(false);
   const [activeTab, setActiveTab] = useState("Dashboard");
-  const [compileMode, setCompileMode] = useState(() => localStorage.getItem("compiler_compile_mode") || "gemini");
+  const [compileMode, setCompileMode] = useState(() => localStorage.getItem("compiler_compile_mode") || "auto");
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem("compiler_gemini_api_key") || "");
+  const [groqApiKey, setGroqApiKey] = useState(() => localStorage.getItem("compiler_groq_api_key") || "");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [compilationsThisSession, setCompilationsThisSession] = useState(0);
 
   // Compile Trigger with Progress and Task Simulation
   async function compile() {
     setCompiling(true);
     setError("");
     setOutput(null);
-    setCompilationProgress(5);
-    setCurrentCompileTask("Initializing Compiler");
-
-    const steps = [
-      { progress: 20, task: "Stage 1: Performing Intent Extraction" },
-      { progress: 40, task: "Stage 2: Drawing Symmetrical Systems" },
-      { progress: 60, task: "Stage 3: Emitting UI & DB Schemas" },
-      { progress: 80, task: "Stage 4: Checking Structural Integrity" },
-      { progress: 95, task: "Stage 5: Seeding Runtime DB Mockup" }
-    ];
-
-    steps.forEach((step, index) => {
-      window.setTimeout(() => {
-        setCompilationProgress(step.progress);
-        setCurrentCompileTask(step.task);
-      }, (index + 1) * 800);
-    });
+    setCompilationProgress(0);
+    setCurrentCompileTask("Waiting for the compiler response…");
 
     try {
       const headers = {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(compileMode === "gemini" && geminiApiKey ? { "X-Gemini-API-Key": geminiApiKey } : {})
+        ...(geminiApiKey ? { "x-gemini-api-key": geminiApiKey } : {}),
+        ...(groqApiKey ? { "x-groq-api-key": groqApiKey } : {})
       };
 
       const data = await apiRequest("/api/compile", {
@@ -676,17 +677,19 @@ function Dashboard({ user, token, onLogout }) {
         body: JSON.stringify({
           prompt,
           compileMode,
-          geminiApiKey: compileMode === "gemini" ? geminiApiKey : ""
+          geminiApiKey,
+          groqApiKey
         })
       });
       setOutput(data);
+      setCompilationsThisSession((count) => count + 1);
       setCompilationProgress(100);
-      setCurrentCompileTask("Compilation Successful");
+      setCurrentCompileTask(data.ok ? "Compilation complete" : "Compilation complete · review the results");
       setCompiling(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Compilation failed.");
       setCompilationProgress(0);
-      setCurrentCompileTask("System Failure");
+      setCurrentCompileTask("Compilation failed");
       setCompiling(false);
     }
   }
@@ -714,27 +717,12 @@ function Dashboard({ user, token, onLogout }) {
   // Scroll to section based on sidebar clicks
   function navigateToSection(label) {
     setActiveTab(label);
+    setMobileNavOpen(false);
     const element = document.getElementById(label.toLowerCase().replace(" ", "-"));
     if (element) {
       element.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
-
-  // Pre-calculated ratings for Validation Radar
-  const radarMetrics = useMemo(() => {
-    if (!output) {
-      return { api: 50, db: 50, auth: 50, runtime: 50, ui: 50, score: 0 };
-    }
-    const hasErrors = output.validation.errors.length > 0;
-    return {
-      api: hasErrors ? 75 : 98,
-      db: hasErrors ? 80 : 96,
-      auth: hasErrors ? 70 : 99,
-      runtime: output.runtime.ok ? 100 : 40,
-      ui: hasErrors ? 85 : 98,
-      score: output.ok ? 99.8 : 82.5
-    };
-  }, [output]);
 
   return (
     <motion.div
@@ -745,12 +733,16 @@ function Dashboard({ user, token, onLogout }) {
     >
       <AnimatedBackground />
 
+      {mobileNavOpen && <button type="button" className="workspace-mobile-scrim lg:hidden" onClick={() => setMobileNavOpen(false)} aria-label="Close workspace navigation" />}
+
       {/* Glassmorphism Left Sidebar */}
       <AIOSSidebar
         expanded={sidebarExpanded}
         setExpanded={setSidebarExpanded}
         activeTab={activeTab}
         onNavigate={navigateToSection}
+        mobileOpen={mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
       />
 
       {/* Main OS Console */}
@@ -764,14 +756,18 @@ function Dashboard({ user, token, onLogout }) {
           progress={compilationProgress}
           onNavigate={navigateToSection}
           onProfileClick={() => setProfileOpen(true)}
+          onMenuClick={() => setMobileNavOpen((open) => !open)}
         />
 
         {/* Console Workspace Grid */}
         <main className="p-6 lg:p-8 space-y-8 max-w-7xl w-full mx-auto pb-24">
           
           {/* Welcome Header & KPI Metrics Grid */}
-          <WelcomeHeader onNewProjectClick={() => navigateToSection("dashboard")} />
-          <MetricsGrid />
+          <WelcomeHeader user={user} onNewProjectClick={() => navigateToSection("dashboard")} />
+          {experienceProfile?.audience === "student" && experienceProfile?.experience === "beginner" && (
+            <div className="beginner-workspace-note"><BookOpen size={16} /><span><strong>New to software terms?</strong> The compiler output is organized into an architecture (how parts connect), schemas (what data is stored), APIs (how parts communicate), and validation (checks for consistency).</span></div>
+          )}
+          <MetricsGrid output={output} compileMode={compileMode} compilationsThisSession={compilationsThisSession} />
 
           {/* Section 1: AI Prompt Generator Section */}
           <div id="dashboard">
@@ -783,17 +779,17 @@ function Dashboard({ user, token, onLogout }) {
               error={error}
               speechActive={simulatedSpeech}
               onStartSpeech={startMockSpeech}
+              compileMode={compileMode}
+              setCompileMode={(mode) => {
+                setCompileMode(mode);
+                localStorage.setItem("compiler_compile_mode", mode);
+              }}
             />
           </div>
 
-          {/* Section 2: AI Agent Team */}
-          <div id="ai-agents">
-            <AIAgentTeam compiling={compiling} progress={compilationProgress} />
-          </div>
-
-          {/* Section 3: Neural Pipeline Grid */}
+          {/* Compilation progress and stage timings */}
           <div id="intent-extraction">
-            <LivePipeline compiling={compiling} progress={compilationProgress} output={output} />
+            <LivePipeline compiling={compiling} progress={compilationProgress} output={output} currentTask={currentCompileTask} />
           </div>
 
           {/* Section 4: Blueprint Schemas Console */}
@@ -809,7 +805,7 @@ function Dashboard({ user, token, onLogout }) {
 
             {/* Section 6: Validation Radar HUD */}
             <div id="validation-engine" className="lg:col-span-4">
-              <ValidationRadar metrics={radarMetrics} output={output} />
+              <ValidationRadar output={output} />
             </div>
           </div>
 
@@ -819,6 +815,11 @@ function Dashboard({ user, token, onLogout }) {
               output={output}
               setPreviewPage={setMockPreviewPage}
             />
+          </div>
+
+          {/* Section 5.5: Full-Stack Generated Source Code & ZIP Exporter */}
+          <div id="source-code">
+            <GeneratedCodeExplorer output={output} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -854,6 +855,11 @@ function Dashboard({ user, token, onLogout }) {
               setGeminiApiKey(key);
               localStorage.setItem("compiler_gemini_api_key", key);
             }}
+            groqApiKey={groqApiKey}
+            setGroqApiKey={(key) => {
+              setGroqApiKey(key);
+              localStorage.setItem("compiler_groq_api_key", key);
+            }}
             onClose={() => setActiveTab("Dashboard")}
           />
         )}
@@ -865,6 +871,10 @@ function Dashboard({ user, token, onLogout }) {
           <ProfileModal
             user={user}
             onClose={() => setProfileOpen(false)}
+            onChangeAudience={() => {
+              setProfileOpen(false);
+              onChangeAudience?.();
+            }}
           />
         )}
       </AnimatePresence>
@@ -885,7 +895,7 @@ function Dashboard({ user, token, onLogout }) {
 
 /* ================== AI OPERATING SYSTEM COMPONENT LAYOUTS ================== */
 
-function WelcomeHeader({ onNewProjectClick }) {
+function WelcomeHeader({ user, onNewProjectClick }) {
   return (
     <motion.div
       className="glass-card-saas rounded-2xl p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 text-left relative overflow-hidden"
@@ -895,10 +905,10 @@ function WelcomeHeader({ onNewProjectClick }) {
     >
       <div className="space-y-1 z-10">
         <h1 className="text-2xl sm:text-3xl font-extrabold text-white font-sans tracking-tight">
-          Welcome Back, Divyansh 👋
+          Welcome back, {user?.name?.split(" ")[0] || "builder"}.
         </h1>
         <p className="text-sm text-slate-400 font-sans">
-          Build production-ready applications using natural language.
+          Describe an idea, then review its architecture, schemas, APIs, and validation.
         </p>
       </div>
       <div className="flex gap-3 flex-shrink-0 z-10">
@@ -921,20 +931,31 @@ function WelcomeHeader({ onNewProjectClick }) {
   );
 }
 
-function MetricsGrid() {
+function MetricsGrid({ output, compileMode, compilationsThisSession }) {
   const metrics = [
-    { label: "Projects Generated", value: 142, change: "+12.4%", sparkline: [10, 20, 15, 30, 25, 45, 40] },
-    { label: "Validation Success Rate", value: "98.4%", change: "+0.8%", sparkline: [95, 96, 95, 97, 98, 97, 98.4] },
-    { label: "API Usage", value: "1,248", change: "+18.2%", sparkline: [200, 400, 350, 600, 800, 1100, 1248] },
-    { label: "Processing Time", value: "0.8s", change: "-14.5%", sparkline: [1.2, 1.1, 1.0, 0.9, 0.8, 0.85, 0.8] }
+    { label: "Builds this session", value: compilationsThisSession },
+    { label: "Latest validation", value: output ? (output.validation?.errors?.length ? `${output.validation.errors.length} issues` : "Passed") : "Not run" },
+    { label: "Runtime preview", value: output ? (output.runtime?.ok ? "Ready" : "Needs review") : "Not run" },
+    {
+      label: "AI Provider",
+      value: output?.provider?.mode
+        ? output.provider.mode.toUpperCase()
+        : compileMode === "auto"
+        ? "AUTO (GEMINI ➔ GROQ)"
+        : compileMode === "gemini"
+        ? "GEMINI 2.5"
+        : compileMode === "groq"
+        ? "GROQ LLAMA-3.3"
+        : "LOCAL DETERMINISTIC"
+    }
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4">
       {metrics.map((card, i) => (
         <motion.div
           key={card.label}
-          className="glass-card-saas glass-card-saas-hover rounded-2xl p-5 text-left flex flex-col justify-between h-36 relative overflow-hidden"
+          className="glass-card-saas glass-card-saas-hover rounded-xl p-4 md:p-5 text-left flex flex-col justify-between min-h-24 relative overflow-hidden"
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: i * 0.08, duration: 0.5 }}
@@ -943,39 +964,13 @@ function MetricsGrid() {
             <span className="text-[10px] font-bold text-slate-400 font-sans uppercase tracking-wider">
               {card.label}
             </span>
-            <span className={`text-[10px] font-bold font-sans px-2.5 py-0.5 rounded-full ${card.change.startsWith("+") ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10"}`}>
-              {card.change}
-            </span>
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-300/80" aria-hidden="true" />
           </div>
 
           <div className="flex items-end justify-between mt-4">
-            <span className="text-3xl font-extrabold text-white font-sans tracking-tight">
+            <span className="text-xl md:text-2xl font-semibold text-white font-sans tracking-tight">
               {card.value}
             </span>
-            {/* Minimal Sparkline */}
-            <svg className="w-16 h-8 overflow-visible" viewBox="0 0 70 30">
-              <polyline
-                fill="none"
-                stroke="url(#sparkline-grad)"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={card.sparkline.map((val, idx) => {
-                  const max = Math.max(...card.sparkline);
-                  const min = Math.min(...card.sparkline);
-                  const spread = max - min || 1;
-                  const x = (idx / (card.sparkline.length - 1)) * 60 + 5;
-                  const y = 25 - ((val - min) / spread) * 20;
-                  return `${x},${y}`;
-                }).join(" ")}
-              />
-              <defs>
-                <linearGradient id="sparkline-grad" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="#60a5fa" />
-                  <stop offset="100%" stopColor="#a78bfa" />
-                </linearGradient>
-              </defs>
-            </svg>
           </div>
         </motion.div>
       ))}
@@ -983,7 +978,7 @@ function MetricsGrid() {
   );
 }
 
-function AIOSSidebar({ expanded, setExpanded, activeTab, onNavigate }) {
+function AIOSSidebar({ expanded, setExpanded, activeTab, onNavigate, mobileOpen = false, onClose }) {
   const avatarTheme = localStorage.getItem("profile_avatar_theme") || "indigo";
   const gradients = {
     indigo: "from-blue-500 via-indigo-500 to-purple-600",
@@ -1009,9 +1004,9 @@ function AIOSSidebar({ expanded, setExpanded, activeTab, onNavigate }) {
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-50 transition-all duration-300 glass-sidebar-saas flex flex-col ${
+      className={`fixed inset-y-0 left-0 z-50 transition-all duration-300 glass-sidebar-saas flex-col ${mobileOpen ? "flex" : "hidden lg:flex"} ${
         expanded ? "w-72" : "w-20"
-      } hidden lg:flex`}
+      }`}
     >
       {/* Brand Header */}
       <div className="h-20 flex items-center px-6 border-b border-white/5 justify-between">
@@ -1044,7 +1039,12 @@ function AIOSSidebar({ expanded, setExpanded, activeTab, onNavigate }) {
           )}
         </AnimatePresence>
 
-        {expanded && (
+        {mobileOpen && (
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 transition lg:hidden" aria-label="Close navigation">
+            <X className="w-4 h-4" />
+          </button>
+        )}
+        {expanded && !mobileOpen && (
           <button
             onClick={() => setExpanded(false)}
             className="p-1.5 rounded-lg border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 transition"
@@ -1111,7 +1111,7 @@ function AIOSSidebar({ expanded, setExpanded, activeTab, onNavigate }) {
   );
 }
 
-function AITopNavbar({ user, onLogout, compiling, currentTask, progress, onNavigate, onProfileClick }) {
+function AITopNavbar({ user, onLogout, compiling, currentTask, onNavigate, onProfileClick, onMenuClick }) {
   const avatarTheme = localStorage.getItem("profile_avatar_theme") || "indigo";
   const gradients = {
     indigo: "from-blue-500 via-indigo-500 to-purple-600",
@@ -1123,21 +1123,15 @@ function AITopNavbar({ user, onLogout, compiling, currentTask, progress, onNavig
   const activeGradient = gradients[avatarTheme] || gradients.indigo;
 
   return (
-    <header className="sticky top-0 z-30 h-20 border-b border-white/5 backdrop-blur-md bg-slate-950/20 flex items-center justify-between px-8">
-      {/* Left: Search Bar */}
-      <div className="flex items-center gap-4 flex-1">
-        <div className="hidden sm:flex items-center gap-3 bg-white/[0.015] border border-white/10 rounded-xl px-4 py-2 flex-1 max-w-sm">
-          <Search className="w-4 h-4 text-slate-500" />
-          <input
-            type="text"
-            placeholder="Search projects or blueprint schemas..."
-            className="bg-transparent text-xs font-sans text-slate-200 placeholder:text-slate-500 outline-none w-full tracking-normal"
-          />
-        </div>
+    <header className="sticky top-0 z-30 min-h-16 border-b border-white/5 backdrop-blur-xl bg-slate-950/80 flex items-center justify-between gap-4 px-4 md:px-8">
+      <div className="flex min-w-0 items-center gap-3">
+        <button type="button" onClick={onMenuClick} aria-label="Open workspace navigation" className="workspace-mobile-menu lg:hidden"><Menu size={18} /></button>
+        <span className="hidden sm:block text-xs font-semibold text-slate-200">Workspace</span>
+        {compiling && <span className="inline-flex min-w-0 items-center gap-2 text-[10px] text-blue-200"><Loader2 size={13} className="animate-spin" /><span className="truncate">{currentTask}</span></span>}
       </div>
 
       {/* Right: Actions */}
-      <div className="flex items-center gap-4 ml-auto">
+      <div className="flex items-center gap-2 md:gap-4 ml-auto">
         <button
           onClick={() => onNavigate("dashboard")}
           className="hidden md:flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-xs font-bold font-sans tracking-wide text-white transition uppercase cursor-pointer"
@@ -1146,17 +1140,12 @@ function AITopNavbar({ user, onLogout, compiling, currentTask, progress, onNavig
           New Project
         </button>
 
-        <button className="p-2 hover:bg-white/5 rounded-xl border border-white/10 text-slate-400 hover:text-white transition relative">
-          <Bell className="w-4.5 h-4.5" />
-          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-indigo-500" />
-        </button>
-
-        <div className="h-6 w-px bg-white/10" />
-
         {/* Profile Menu */}
-        <div 
+        <button
+          type="button"
           onClick={onProfileClick}
-          className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition select-none"
+          aria-label="Open profile and experience preferences"
+          className="flex items-center gap-3 rounded-lg px-1.5 py-1 cursor-pointer hover:bg-white/5 transition select-none text-left"
         >
           <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${activeGradient} flex items-center justify-center text-xs font-bold text-white shadow`}>
             {user?.name?.charAt(0).toUpperCase() || "O"}
@@ -1165,7 +1154,7 @@ function AITopNavbar({ user, onLogout, compiling, currentTask, progress, onNavig
             <p className="text-xs font-bold text-white font-sans leading-none">{user?.name || "Operator"}</p>
             <p className="text-[10px] text-slate-400 font-sans tracking-wide mt-0.5 capitalize">Team Member</p>
           </div>
-        </div>
+        </button>
 
         <button
           onClick={onLogout}
@@ -1179,7 +1168,17 @@ function AITopNavbar({ user, onLogout, compiling, currentTask, progress, onNavig
   );
 }
 
-function AICommandCenter({ prompt, setPrompt, onCompile, compiling, error, speechActive, onStartSpeech }) {
+function AICommandCenter({
+  prompt,
+  setPrompt,
+  onCompile,
+  compiling,
+  error,
+  speechActive,
+  onStartSpeech,
+  compileMode,
+  setCompileMode
+}) {
   const maxChars = 500;
   const charCount = prompt.length;
 
@@ -1201,13 +1200,38 @@ function AICommandCenter({ prompt, setPrompt, onCompile, compiling, error, speec
 
       <div className="glass-card-saas rounded-2xl p-6 relative overflow-hidden">
         <div className="relative z-10 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Terminal className="w-4 h-4 text-blue-400" />
               <span className="text-xs font-semibold text-slate-300 tracking-wide uppercase">
                 App Specification Prompt
               </span>
             </div>
+
+            {/* AI Provider Selector Pills */}
+            <div className="flex flex-wrap items-center gap-1.5 bg-slate-950/70 p-1 rounded-xl border border-white/10">
+              {[
+                { id: "auto", label: "Auto (Gemini ➔ Groq)" },
+                { id: "gemini", label: "Gemini 2.5" },
+                { id: "groq", label: "Groq Llama-3.3" },
+                { id: "local", label: "Local Engine" }
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setCompileMode?.(p.id)}
+                  disabled={compiling}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                    compileMode === p.id
+                      ? "bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md shadow-indigo-600/30"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
             {speechActive && (
               <span className="flex items-center gap-2 bg-rose-500/10 px-3 py-1 rounded-full text-rose-400 font-sans font-medium text-[10px] animate-pulse border border-rose-500/20">
                 <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
@@ -1428,24 +1452,18 @@ function AIAgentTeam({ compiling, progress }) {
   );
 }
 
-function LivePipeline({ compiling, progress, output }) {
-  const steps = [
-    { title: "Intent Extraction", time: "1.2s", tokens: "420" },
-    { title: "System Design", time: "0.8s", tokens: "840" },
-    { title: "Schema Generation", time: "1.5s", tokens: "1.2k" },
-    { title: "Validation Engine", time: "0.5s", tokens: "210" },
-    { title: "Repair Engine", time: "0.4s", tokens: "320" },
-    { title: "Runtime Execution", time: "1.1s", tokens: "680" }
-  ];
+function LivePipeline({ compiling, progress, output, currentTask }) {
+  const fallbackSteps = ["Intent Extraction", "System Design", "Schema Generation", "Validation + Repair", "Runtime Execution"];
+  const timings = output?.metrics?.stageTimings || [];
+  const steps = (timings.length ? timings : fallbackSteps.map((title) => ({ name: title }))).map((step) => ({
+    title: step.name || step.title,
+    time: Number.isFinite(step.ms) ? `${step.ms} ms` : ""
+  }));
 
   function getNodeStatus(idx) {
-    if (!compiling && !output) return "pending";
-    if (output) return "success";
-    
-    const indexThreshold = idx * 16;
-    if (progress < indexThreshold) return "pending";
-    if (progress >= indexThreshold && progress < indexThreshold + 16) return "active";
-    return "success";
+    if (compiling || !output) return "pending";
+    if (output) return output.ok === false && idx >= steps.length - 2 ? "review" : "success";
+    return "pending";
   }
 
   return (
@@ -1460,6 +1478,7 @@ function LivePipeline({ compiling, progress, output }) {
           <Layers3 className="w-5 h-5 text-slate-400" />
           Compilation Pipeline
         </h3>
+        <p className="text-xs text-slate-400">{compiling ? <span className="inline-flex items-center gap-2 text-blue-200"><Loader2 size={13} className="animate-spin" />{currentTask}</span> : output ? `Measured stage durations from this run · ${output.metrics?.latencyMs ?? "—"} ms total` : "Stage timings will appear after you compile an idea."}</p>
       </div>
 
       <div className="glass-card-saas rounded-2xl p-6 overflow-x-auto relative">
@@ -1480,6 +1499,8 @@ function LivePipeline({ compiling, progress, output }) {
                   className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs border transition-all duration-300 z-10 shadow-sm ${
                     status === "success"
                       ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                      : status === "review"
+                      ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
                       : status === "active"
                       ? "bg-blue-500/10 border-blue-500/40 text-blue-400 bg-slate-950"
                       : "bg-slate-950 border-white/5 text-slate-500"
@@ -1489,6 +1510,8 @@ function LivePipeline({ compiling, progress, output }) {
                 >
                   {status === "success" ? (
                     <Check className="w-4 h-4 text-emerald-400" />
+                  ) : status === "review" ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-300" />
                   ) : status === "active" ? (
                     <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
                   ) : (
@@ -1504,15 +1527,13 @@ function LivePipeline({ compiling, progress, output }) {
                 <div className="mt-1.5 text-center font-sans">
                   <div className="flex items-center justify-center gap-1 text-[10px] text-slate-400">
                     <Clock3 className="w-3 h-3 text-slate-500" />
-                    <span>{step.time}</span>
-                    <span className="text-slate-600">•</span>
-                    <span>{step.tokens} tok</span>
+                    {step.time ? <span>{step.time}</span> : <span>{compiling ? "In progress" : "Awaiting run"}</span>}
                   </div>
                   <div className="mt-1">
                     <span className={`text-[9px] font-medium tracking-wide uppercase ${
-                      status === "success" ? "text-emerald-400" : status === "active" ? "text-blue-400 animate-pulse" : "text-slate-600"
+                      status === "success" ? "text-emerald-400" : status === "review" ? "text-amber-300" : status === "active" ? "text-blue-400 animate-pulse" : "text-slate-500"
                     }`}>
-                      {status === "success" ? "Completed" : status === "active" ? "Running" : "Pending"}
+                      {status === "success" ? "Completed" : status === "review" ? "Review" : status === "active" ? "Running" : "Pending"}
                     </span>
                   </div>
                 </div>
@@ -1525,250 +1546,79 @@ function LivePipeline({ compiling, progress, output }) {
   );
 }
 
+class ArchitectureSceneBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch() { /* Keep the rest of the workspace usable if WebGL is unavailable. */ }
+  render() { return this.state.failed ? <div className="scene-error-fallback">Interactive 3D is unavailable in this browser. The blueprint details remain available below.</div> : this.props.children; }
+}
+
 function ArchitectureMap({ output }) {
   const [selectedNode, setSelectedNode] = useState(null);
-
-  const nodes = [
-    { id: "fe", label: "FRONTEND CORE", color: "border-cyan-400 text-cyan-300 bg-cyan-500/5", desc: "Vite + React UI view layers" },
-    { id: "be", label: "BACKEND MIDDLEWARE", color: "border-blue-400 text-blue-300 bg-blue-500/5", desc: "Vercel Express api-endpoints" },
-    { id: "db", label: "DATABASE ATLAS", color: "border-purple-400 text-purple-300 bg-purple-500/5", desc: "MongoDB model collection tables" },
-    { id: "auth", label: "AUTH DECRYPT", color: "border-pink-500 text-pink-300 bg-pink-500/5", desc: "Salted PBKDF2 user session tables" },
-    { id: "pay", label: "PAYMENTS CORE", color: "border-amber-500 text-amber-300 bg-amber-500/5", desc: "Stripe sandbox simulated transaction logs" },
-    { id: "anal", label: "ANALYTICS ENGINE", color: "border-emerald-500 text-emerald-300 bg-emerald-500/5", desc: "Metric telemetry reporting models" }
-  ];
+  const [show3D, setShow3D] = useState(false);
+  const schemas = output?.schemas || {};
+  const tables = schemas.db_schema?.tables || schemas.database_schema?.tables || [];
+  const endpoints = schemas.api_schema?.endpoints || [];
+  const pages = schemas.ui_schema?.pages || [];
+  const roles = schemas.auth_schema?.roles || [];
+  const nodes = output ? [
+    { id: "app", label: output.intent?.app_name || "Application", detail: `${output.intent?.app_type || "Application"} blueprint` },
+    { id: "pages", label: "Interface", detail: `${pages.length} page${pages.length === 1 ? "" : "s"} in the generated UI schema` },
+    { id: "api", label: "API", detail: `${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"} in the generated API schema` },
+    { id: "data", label: "Data", detail: tables.length ? tables.map((table) => table.name).join(", ") : "No database tables were returned" },
+    { id: "access", label: "Access", detail: roles.length ? roles.map((role) => role.name).join(", ") : "No access roles were returned" },
+    { id: "checks", label: "Validation", detail: output.validation?.errors?.length ? `${output.validation.errors.length} validation issue(s)` : "No validation errors reported" }
+  ] : [];
+  const activeNode = nodes.find((node) => node.id === selectedNode);
 
   return (
-    <motion.div
-      className="glass-panel-ai rounded-3xl p-6 border border-cyan-500/10 h-full flex flex-col justify-between text-left relative overflow-hidden"
-      whileHover={{ borderColor: "rgba(34, 211, 238, 0.2)" }}
-    >
-      <div className="absolute inset-0 grid-bg-cyber opacity-[0.05] pointer-events-none" />
-
-      <div>
-        <h3 className="text-lg font-bold font-mono text-cyan-300 uppercase tracking-widest flex items-center gap-2 mb-1">
-          <Database className="w-4.5 h-4.5 text-cyan-400" />
-          BLUEPRINT ARCHITECTURE MAP
-        </h3>
-        <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest">
-          Interlinked blueprint layouts of generated server networks. Click nodes to inspect.
-        </p>
+    <motion.section className="architecture-result-card" aria-labelledby="architecture-title">
+      <div className="architecture-result-header">
+        <div><h3 id="architecture-title"><Network size={17} /> Blueprint architecture</h3><p>Derived from this compilation’s interface, API, data, access, and validation outputs.</p></div>
+        <button className="architecture-view-toggle" type="button" onClick={() => setShow3D((visible) => !visible)} disabled={!output} aria-pressed={show3D}>{show3D ? "Show diagram" : "3D concept view"}</button>
       </div>
-
-      <div className="my-8 relative min-h-[300px] flex items-center justify-center">
-        {output ? (
-          <div className="relative w-full max-w-lg h-full flex items-center justify-center">
-            {/* Interactive SVG Connector Map */}
-            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
-              <defs>
-                <linearGradient id="cyberLineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.8" />
-                  <stop offset="50%" stopColor="#3b82f6" stopOpacity="0.8" />
-                  <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.8" />
-                </linearGradient>
-              </defs>
-              {/* Lines from FE to BE, BE to DB, BE to Auth, BE to Payments, BE to Analytics */}
-              <line x1="50%" y1="15%" x2="50%" y2="40%" stroke="url(#cyberLineGrad)" strokeWidth="1.5" strokeDasharray="4 4" className="pulse-slow" />
-              <line x1="50%" y1="60%" x2="50%" y2="85%" stroke="url(#cyberLineGrad)" strokeWidth="1.5" strokeDasharray="4 4" />
-              
-              <line x1="50%" y1="50%" x2="15%" y2="50%" stroke="url(#cyberLineGrad)" strokeWidth="1.5" strokeDasharray="4 4" />
-              <line x1="50%" y1="50%" x2="85%" y2="50%" stroke="url(#cyberLineGrad)" strokeWidth="1.5" strokeDasharray="4 4" />
-              <line x1="50%" y1="50%" x2="15%" y2="85%" stroke="url(#cyberLineGrad)" strokeWidth="1.5" strokeDasharray="4 4" />
-            </svg>
-
-            {/* Frontend Node */}
-            <motion.button
-              onClick={() => setSelectedNode("fe")}
-              className={`absolute top-[5%] left-[50%] -translate-x-1/2 px-4 py-2.5 rounded-xl border z-10 font-mono text-[9px] uppercase tracking-widest font-black ${nodes[0].color} shadow-lg`}
-              whileHover={{ scale: 1.1 }}
-            >
-              {nodes[0].label}
-            </motion.button>
-
-            {/* Backend Node */}
-            <motion.button
-              onClick={() => setSelectedNode("be")}
-              className={`absolute top-[40%] left-[50%] -translate-x-1/2 px-4 py-2.5 rounded-xl border z-10 font-mono text-[9px] uppercase tracking-widest font-black ${nodes[1].color} shadow-lg`}
-              whileHover={{ scale: 1.1 }}
-            >
-              {nodes[1].label}
-            </motion.button>
-
-            {/* Left nodes */}
-            <motion.button
-              onClick={() => setSelectedNode("auth")}
-              className={`absolute top-[40%] left-[5%] px-4 py-2.5 rounded-xl border z-10 font-mono text-[9px] uppercase tracking-widest font-black ${nodes[3].color} shadow-lg`}
-              whileHover={{ scale: 1.1 }}
-            >
-              {nodes[3].label}
-            </motion.button>
-
-            {/* Right nodes */}
-            <motion.button
-              onClick={() => setSelectedNode("pay")}
-              className={`absolute top-[40%] right-[5%] px-4 py-2.5 rounded-xl border z-10 font-mono text-[9px] uppercase tracking-widest font-black ${nodes[4].color} shadow-lg`}
-              whileHover={{ scale: 1.1 }}
-            >
-              {nodes[4].label}
-            </motion.button>
-
-            {/* Database Node */}
-            <motion.button
-              onClick={() => setSelectedNode("db")}
-              className={`absolute bottom-[5%] left-[50%] -translate-x-1/2 px-4 py-2.5 rounded-xl border z-10 font-mono text-[9px] uppercase tracking-widest font-black ${nodes[2].color} shadow-lg`}
-              whileHover={{ scale: 1.1 }}
-            >
-              {nodes[2].label}
-            </motion.button>
-
-            {/* Analytics Node */}
-            <motion.button
-              onClick={() => setSelectedNode("anal")}
-              className={`absolute bottom-[5%] left-[5%] px-4 py-2.5 rounded-xl border z-10 font-mono text-[9px] uppercase tracking-widest font-black ${nodes[5].color} shadow-lg`}
-              whileHover={{ scale: 1.1 }}
-            >
-              {nodes[5].label}
-            </motion.button>
+      {output ? (
+        <>
+          {show3D && <div className="dashboard-scene-wrap"><ArchitectureSceneBoundary><Suspense fallback={<div className="scene-error-fallback">Loading interactive architecture…</div>}><ArchitectureScene /></Suspense></ArchitectureSceneBoundary><span className="dashboard-scene-caption">Interactive conceptual view · details below are from this compilation</span></div>}
+          <div className="architecture-result-flow">
+            {nodes.map((node, index) => <React.Fragment key={node.id}><button type="button" className={`architecture-result-node ${selectedNode === node.id ? "selected" : ""}`} onClick={() => setSelectedNode(node.id)} aria-pressed={selectedNode === node.id}><span>{node.label}</span><small>{node.id === "data" ? `${tables.length} tables` : node.id === "api" ? `${endpoints.length} endpoints` : node.id === "pages" ? `${pages.length} pages` : node.id === "access" ? `${roles.length} roles` : node.id === "checks" ? (output.validation?.errors?.length ? "Review" : "Clear") : "Blueprint"}</small></button>{index < nodes.length - 1 && <span className="architecture-result-connector" aria-hidden="true" />}</React.Fragment>)}
           </div>
-        ) : (
-          <div className="text-center space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-slate-900 border border-slate-700/30 flex items-center justify-center mx-auto relative overflow-hidden shadow-inner">
-              <Database className="w-7 h-7 text-slate-700 animate-pulse" />
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs font-bold font-mono text-slate-500 uppercase tracking-widest">
-                ARCHITECT HUD IDLE
-              </p>
-              <p className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">
-                Compile prompt algorithm to render live network flow.
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Symmetrical Hover HUD details */}
-      <div className="h-16 border-t border-cyan-500/10 pt-4">
-        <AnimatePresence mode="wait">
-          {selectedNode ? (
-            <motion.div
-              key={selectedNode}
-              className="text-left font-mono text-[10px] space-y-1"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-            >
-              <p className="text-cyan-300 font-bold uppercase tracking-widest">
-                NODE METADATA: {nodes.find((n) => n.id === selectedNode)?.label}
-              </p>
-              <p className="text-slate-400 uppercase tracking-wider">
-                {nodes.find((n) => n.id === selectedNode)?.desc}
-              </p>
-            </motion.div>
-          ) : (
-            <div className="text-slate-600 font-mono text-[9px] uppercase tracking-widest flex items-center gap-1.5">
-              <Terminal className="w-3.5 h-3.5" />
-              <span>Select any structural blueprint node above to load its operational HUD schemas.</span>
-            </div>
-          )}
-        </AnimatePresence>
-      </div>
-    </motion.div>
+          <div className="architecture-result-detail" aria-live="polite"><strong>{activeNode?.label || "Compilation overview"}</strong><span>{activeNode?.detail || `${tables.length} data tables · ${endpoints.length} API endpoints · ${pages.length} UI pages · ${roles.length} access roles`}</span></div>
+        </>
+      ) : (
+        <div className="architecture-empty-state"><Network size={21} /><strong>Your architecture will appear here</strong><span>Describe an application above and compile it to inspect the actual generated structures.</span></div>
+      )}
+    </motion.section>
   );
 }
 
-function ValidationRadar({ metrics, output }) {
-  // Calculated dynamically based on radar parameters
-  const scoreDegrees = 360 * (metrics.score / 100);
+function ValidationRadar({ output }) {
+  const errors = output?.validation?.errors || [];
+  const warnings = output?.validation?.warnings || [];
+  const checks = output?.runtime?.checks || [];
+  const passedChecks = checks.filter((check) => check.pass).length;
+  const summaries = [
+    { label: "Validation result", value: output ? (errors.length ? `${errors.length} issue${errors.length === 1 ? "" : "s"}` : "No errors") : "Not run", tone: output && errors.length ? "warning" : output ? "success" : "neutral" },
+    { label: "Warnings", value: output ? String(warnings.length) : "—", tone: "neutral" },
+    { label: "Runtime checks", value: output ? `${passedChecks} / ${checks.length} passed` : "Not run", tone: output && passedChecks < checks.length ? "warning" : output ? "success" : "neutral" },
+    { label: "Repairs applied", value: output ? String(output.validation?.repairs?.length || 0) : "—", tone: "neutral" }
+  ];
 
   return (
-    <motion.div
-      className="glass-panel-ai rounded-3xl p-6 border border-cyan-500/10 h-full flex flex-col justify-between text-left relative overflow-hidden"
-      whileHover={{ borderColor: "rgba(34, 211, 238, 0.2)" }}
-    >
-      <div className="absolute inset-0 grid-bg-cyber opacity-[0.05] pointer-events-none" />
-
-      <div>
-        <h3 className="text-lg font-bold font-mono text-cyan-300 uppercase tracking-widest flex items-center gap-2 mb-1">
-          <ShieldCheck className="w-4.5 h-4.5 text-cyan-400" />
-          VALIDATION RADAR HUD
-        </h3>
-        <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest">
-          Symmetrical integrity evaluation across 5 validation vectors.
-        </p>
-      </div>
-
-      <div className="my-6 flex flex-col items-center justify-center relative">
-        {/* Dynamic Glowing Radar Circular Chart */}
-        <div className="relative w-48 h-48 rounded-full border border-cyan-500/10 flex items-center justify-center">
-          <div className="absolute w-36 h-36 rounded-full border border-cyan-500/10 flex items-center justify-center" />
-          <div className="absolute w-24 h-24 rounded-full border border-cyan-500/5 flex items-center justify-center" />
-          
-          {/* Neon radar sweeping overlay */}
-          <motion.div 
-            className="absolute inset-0 rounded-full border-r-2 border-cyan-400/30 bg-gradient-to-r from-cyan-400/0 via-cyan-400/5 to-cyan-400/10"
-            animate={{ rotate: 360 }}
-            transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-          />
-
-          {/* Symmetrical Glowing SVG Radar Polygon */}
-          <svg className="absolute inset-0 w-full h-full z-10" viewBox="0 0 100 100">
-            {output ? (
-              <motion.polygon
-                points={`
-                  50,${50 - (metrics.db / 100) * 40} 
-                  ${50 + (metrics.api / 100) * 38},${50 - (metrics.api / 100) * 12} 
-                  ${50 + (metrics.runtime / 100) * 24},${50 + (metrics.runtime / 100) * 32} 
-                  ${50 - (metrics.auth / 100) * 24},${50 + (metrics.auth / 100) * 32} 
-                  ${50 - (metrics.ui / 100) * 38},${50 - (metrics.ui / 100) * 12}
-                `}
-                fill="rgba(34, 211, 238, 0.15)"
-                stroke="#22d3ee"
-                strokeWidth="1"
-                initial={{ opacity: 0, scale: 0.1 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 1 }}
-              />
-            ) : null}
-          </svg>
-
-          {/* Central score badge */}
-          <div className="z-10 text-center font-mono">
-            <span className="text-[10px] text-slate-500 uppercase tracking-widest">STABILITY</span>
-            <p className="text-xl font-black text-cyan-300 text-glow-cyber">{metrics.score}%</p>
-          </div>
+    <section className="validation-summary-card" aria-labelledby="validation-title">
+      <div className="validation-summary-heading"><div><h3 id="validation-title"><ShieldCheck size={17} /> Validation</h3><p>Results reported by this compilation</p></div><span className={`validation-state ${output ? (output.ok ? "passed" : "attention") : "idle"}`}>{output ? (output.ok ? "Reviewed" : "Needs review") : "Not run"}</span></div>
+      {output ? (
+        <div className="validation-summary-list">
+          {summaries.map((item) => <div className="validation-summary-row" key={item.label}><span>{item.label}</span><strong className={item.tone}>{item.value}</strong></div>)}
+          {errors.length > 0 && <div className="validation-issues"><strong>Issues to review</strong>{errors.slice(0, 3).map((error, index) => <p key={`${index}-${String(error).slice(0, 24)}`}>{typeof error === "string" ? error : error.message || JSON.stringify(error)}</p>)}</div>}
         </div>
-
-        {/* Vectors indices legend */}
-        <div className="mt-5 grid grid-cols-2 gap-3 w-full text-[9px] font-mono">
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            <span className="text-slate-500 uppercase">DB INTEGRITY: {metrics.db}%</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            <span className="text-slate-500 uppercase">API SPEC: {metrics.api}%</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            <span className="text-slate-500 uppercase">AUTH SHIELD: {metrics.auth}%</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            <span className="text-slate-500 uppercase">UI ROUTE: {metrics.ui}%</span>
-          </div>
-        </div>
-      </div>
-    </motion.div>
+      ) : <div className="validation-empty-state">Compile an idea to see schema and runtime validation details.</div>}
+    </section>
   );
 }
 
 function RuntimePreview({ output, setPreviewPage }) {
-  const cards = [
-    { title: "Login Page", route: "/login", roles: ["guest", "admin", "member"] },
-    { title: "Dashboard", route: "/dashboard", roles: ["admin", "member"] },
-    { title: "Settings", route: "/settings", roles: ["admin"] },
-    { title: "Analytics", route: "/analytics", roles: ["admin", "manager"] }
-  ];
+  const cards = output?.schemas?.ui_schema?.pages || [];
 
   function handleDownloadConfig() {
     if (!output) return;
@@ -1796,12 +1646,12 @@ function RuntimePreview({ output, setPreviewPage }) {
     >
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-xl font-black text-cyan-300 flex items-center gap-2 font-mono uppercase tracking-wider">
+          <h3 className="text-xl font-bold text-white flex items-center gap-2 font-sans">
             <PlayCircle className="w-5 h-5" />
-            GENERATED APPLICATION RUNTIME HUD
+            Runtime preview
           </h3>
-          <p className="text-slate-400 text-xs font-mono mt-1 uppercase tracking-widest text-[9px]">
-            Live sandboxed pages booted in browser simulators.
+          <p className="text-slate-400 text-xs mt-1">
+            Sandboxed previews built from pages in the generated UI schema.
           </p>
         </div>
 
@@ -1870,24 +1720,199 @@ function RuntimePreview({ output, setPreviewPage }) {
                 className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-[9px] font-bold font-mono uppercase tracking-widest rounded-xl border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-50 disabled:pointer-events-none transition"
               >
                 <Eye className="w-3.5 h-3.5" />
-                SIMULATE
+                Preview sandbox
               </button>
             </div>
           </motion.div>
         ))}
+        {cards.length === 0 && <div className="architecture-empty-state col-span-full"><Eye size={20} /><strong>No generated pages yet</strong><span>Compile an application idea to preview pages from its UI schema.</span></div>}
       </div>
     </motion.section>
   );
 }
 
-function RecentProjects({ output, onCompilePrompt }) {
-  // Pre-compiled project presets
-  const mockProjects = [
-    { title: "Global Logistics CRM App", validation: "98.8%", timing: "4 mins ago", latency: "2ms", status: "VERIFIED" },
-    { title: "Modular E-Commerce Store", validation: "99.2%", timing: "1 hour ago", latency: "4ms", status: "VERIFIED" },
-    { title: "Salons Booking HUD Platform", validation: "96.4%", timing: "1 day ago", latency: "3ms", status: "VERIFIED" }
-  ];
+function GeneratedCodeExplorer({ output }) {
+  const project = output?.project;
+  const files = project?.files || {};
+  const fileKeys = Object.keys(files);
+  const [selectedFile, setSelectedFile] = useState(() => fileKeys[0] || "frontend/src/App.jsx");
+  const [activeCategory, setActiveCategory] = useState("all");
+  const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
+  useEffect(() => {
+    if (fileKeys.length) {
+      if (!selectedFile || !files[selectedFile]) {
+        setSelectedFile(fileKeys.find((f) => f.includes("App.jsx")) || fileKeys[0]);
+      }
+    }
+  }, [project]);
+
+  if (!output || !project) {
+    return (
+      <section className="glass-card-saas rounded-2xl p-6 text-left space-y-4">
+        <div className="flex items-center gap-2">
+          <Code2 className="w-5 h-5 text-indigo-400" />
+          <h3 className="text-lg font-bold text-white">Full-Stack Source Code & Project Files</h3>
+        </div>
+        <div className="architecture-empty-state">
+          <FileCode size={24} className="text-indigo-400" />
+          <strong>No code compiled yet</strong>
+          <span>Compile an application prompt to generate runnable React, Express, and MongoDB source code.</span>
+        </div>
+      </section>
+    );
+  }
+
+  const filteredKeys = fileKeys.filter((key) => {
+    if (activeCategory === "frontend") return key.startsWith("frontend/");
+    if (activeCategory === "backend") return key.startsWith("backend/") && !key.includes("models/");
+    if (activeCategory === "database") return key.includes("models/") || key.includes("seed.js") || key.includes("db.js");
+    if (activeCategory === "config") return key.includes("package.json") || key.includes(".env") || key.includes("README.md") || key.includes("vite.config");
+    return true;
+  });
+
+  async function handleDownloadZip() {
+    try {
+      setDownloading(true);
+      const zipBlob = await createProjectZip(files);
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${project.safeName || "software"}-full-stack.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Failed to generate ZIP: " + err.message);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  function handleCopy() {
+    if (!files[selectedFile]) return;
+    navigator.clipboard.writeText(files[selectedFile]);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <section className="glass-card-saas rounded-2xl p-6 text-left space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Code2 className="w-5 h-5 text-indigo-400" />
+            <h3 className="text-lg font-bold text-white">Generated Full-Stack Source Code</h3>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            Real runnable React frontend, Express REST APIs, Mongoose database models, and authentication.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleDownloadZip}
+            disabled={downloading}
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30 transition disabled:opacity-50"
+          >
+            {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Download Project (ZIP)
+          </button>
+        </div>
+      </div>
+
+      {/* Summary badges */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div className="text-slate-500 text-[10px] uppercase font-bold">Frontend Files</div>
+          <div className="text-base font-bold text-indigo-400">{project.summary?.frontendFiles || 0} React / Vite</div>
+        </div>
+        <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div className="text-slate-500 text-[10px] uppercase font-bold">Backend Services</div>
+          <div className="text-base font-bold text-blue-400">{project.summary?.backendFiles || 0} Express Routes</div>
+        </div>
+        <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div className="text-slate-500 text-[10px] uppercase font-bold">Database Models</div>
+          <div className="text-base font-bold text-emerald-400">{project.summary?.tablesCount || 0} Mongoose Models</div>
+        </div>
+        <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div className="text-slate-500 text-[10px] uppercase font-bold">Cross-Layer Audit</div>
+          <div className="text-base font-bold text-cyan-400">{project.crossLayerChecks?.total || 0} Checks Verified</div>
+        </div>
+      </div>
+
+      {/* Category Filter Tabs */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-white/5 pb-2">
+        {[
+          { id: "all", label: `All Files (${fileKeys.length})` },
+          { id: "frontend", label: "Frontend (React)" },
+          { id: "backend", label: "Backend (Node.js)" },
+          { id: "database", label: "Database (MongoDB)" },
+          { id: "config", label: "Config & Readme" }
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveCategory(tab.id)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+              activeCategory === tab.id
+                ? "bg-indigo-600 text-white"
+                : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Code Browser Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 rounded-xl border border-slate-800 bg-slate-950/70 overflow-hidden min-h-[420px]">
+        {/* File Tree Column */}
+        <div className="lg:col-span-4 border-b lg:border-b-0 lg:border-r border-slate-800 p-3 overflow-y-auto max-h-[500px] space-y-1">
+          <div className="text-[10px] uppercase font-bold text-slate-500 px-2 py-1 tracking-wider">Project Files</div>
+          {filteredKeys.map((path) => (
+            <button
+              key={path}
+              onClick={() => setSelectedFile(path)}
+              className={`w-full text-left px-3 py-2 rounded-lg text-xs font-mono truncate transition flex items-center gap-2 ${
+                selectedFile === path
+                  ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/40"
+                  : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+              }`}
+            >
+              <FileCode size={13} className="flex-shrink-0" />
+              <span className="truncate">{path}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* File Content Preview */}
+        <div className="lg:col-span-8 p-4 flex flex-col justify-between max-h-[500px]">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2 font-mono text-xs text-indigo-400 truncate">
+              <FileCode size={14} />
+              <span className="font-semibold">{selectedFile}</span>
+            </div>
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 px-3 py-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md transition"
+            >
+              {copied ? <Check size={12} className="text-emerald-400" /> : <Terminal size={12} />}
+              {copied ? "Copied" : "Copy Code"}
+            </button>
+          </div>
+
+          <pre className="flex-1 overflow-auto mt-3 p-3 rounded-lg bg-slate-900/50 text-slate-300 font-mono text-xs leading-relaxed selection:bg-indigo-500/30">
+            <code>{files[selectedFile] || "// Select a file to view code"}</code>
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RecentProjects({ output, onCompilePrompt }) {
   return (
     <motion.section
       initial={{ opacity: 0, y: 15 }}
@@ -1898,110 +1923,61 @@ function RecentProjects({ output, onCompilePrompt }) {
       <div>
         <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-1">
           <Blocks className="w-5 h-5 text-slate-400" />
-          Recent Blueprints
+          Latest compilation
         </h3>
         <p className="text-xs text-slate-400">
-          History of compiled models and specification performance.
+          The most recent result in this browser session. It is not saved as a project.
         </p>
       </div>
 
       <div className="space-y-3.5">
-        {output && (
+        {output ? (
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="glass-card-saas p-5 rounded-2xl relative overflow-hidden group text-left"
+            className="glass-card-saas p-5 rounded-xl relative overflow-hidden group text-left"
           >
-            <div className="absolute top-0 right-0 bg-emerald-500/10 border-l border-b border-emerald-500/20 rounded-bl-xl px-3 py-1.5 text-[10px] font-semibold text-emerald-400 font-sans">
-              Latest Live Run
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div><h4 className="text-sm font-bold text-white font-sans">{output.intent?.app_name || "Untitled application"}</h4><p className="text-xs text-slate-400 mt-1">{output.intent?.app_type || "Application blueprint"}</p></div>
+              <span className={`rounded-full px-2.5 py-1 text-[9px] font-semibold ${output.ok ? "bg-emerald-500/10 text-emerald-300" : "bg-amber-500/10 text-amber-200"}`}>{output.ok ? "Validation passed" : "Needs review"}</span>
             </div>
-
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h4 className="text-sm font-bold text-white font-sans">
-                  {output.intent.app_name}
-                </h4>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Type: {output.intent.app_type} • Seed compiled just now
-                </p>
-              </div>
-              <div className="text-right">
-                <span className="text-xs font-bold text-emerald-400">
-                  {output.ok ? "✓ 99.8%" : "! 82.5%"}
-                </span>
-                <p className="text-[10px] text-slate-500 font-sans">Stability</p>
-              </div>
-            </div>
-
             <div className="grid grid-cols-3 gap-4 border-t border-white/5 pt-3.5 text-xs font-sans">
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-blue-400" />
                 <div>
-                  <p className="text-[10px] text-slate-500 uppercase">Collections</p>
-                  <p className="font-bold text-white text-[11px]">{output.schemas.db_schema.tables.length}</p>
+                  <p className="text-[10px] text-slate-500 uppercase">Data tables</p>
+                  <p className="font-bold text-white text-[11px]">{output.schemas?.db_schema?.tables?.length || 0}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <Code2 className="w-4 h-4 text-indigo-400" />
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase">Endpoints</p>
-                  <p className="font-bold text-white text-[11px]">{output.schemas.api_schema.endpoints.length}</p>
+                  <p className="font-bold text-white text-[11px]">{output.schemas?.api_schema?.endpoints?.length || 0}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <Clock3 className="w-4 h-4 text-violet-400" />
                 <div>
                   <p className="text-[10px] text-slate-500 uppercase">Speed</p>
-                  <p className="font-bold text-white text-[11px]">{output.metrics.latencyMs}ms</p>
+                  <p className="font-bold text-white text-[11px]">{output.metrics?.latencyMs ?? "—"} ms</p>
                 </div>
               </div>
             </div>
+            <div className="mt-4 flex justify-end"><button type="button" onClick={() => onCompilePrompt(output.input || "")} className="button-quiet min-h-9 text-[10px]">Reuse this prompt<ArrowRight size={14} /></button></div>
           </motion.div>
-        )}
-
-        {mockProjects.map((project, idx) => (
-          <div
-            key={idx}
-            className="glass-card-saas p-4 rounded-xl flex items-center justify-between text-left hover:border-white/20 transition duration-200"
-          >
-            <div>
-              <h4 className="text-xs font-bold text-slate-200 font-sans">{project.title}</h4>
-              <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-1 font-sans">
-                <span>{project.timing}</span>
-                <span>•</span>
-                <span>Latency: {project.latency}</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <div className="text-right font-sans">
-                <span className="text-xs font-bold text-blue-400">{project.validation}</span>
-                <p className="text-[9px] text-slate-500 uppercase">Score</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onCompilePrompt(project.title)}
-                className="px-3 py-1.5 border border-white/10 hover:bg-white/5 rounded-lg text-xs font-medium text-slate-300 transition"
-              >
-                Load Project
-              </button>
-            </div>
-          </div>
-        ))}
+        ) : <div className="architecture-empty-state"><Blocks size={20} /><strong>No compilation in this session</strong><span>Your result will stay here while this tab is open. Saved project history is not enabled.</span></div>}
       </div>
     </motion.section>
   );
 }
 
-function AIActivityTimeline({ output, compiling }) {
-  const activities = [
-    { time: "12:33 PM", event: "Simulation Sandbox Generated", detail: "Boots sandbox database & mock APIs successfully." },
-    { time: "12:33 PM", event: "Structural Repair Applied", detail: "Self-patched 3 minor database schema inconsistencies." },
-    { time: "12:32 PM", event: "Telemetry Validation Run", detail: "Cross-checked authentication pages vs backend roles." },
-    { time: "12:32 PM", event: "Schema Generation Emitted", detail: "Assembled executable JSON schemas for DB & API endpoints." },
-    { time: "12:31 PM", event: "Logical Design Rendered", detail: "Created relationship mapping owner keys to Users tables." },
-    { time: "12:31 PM", event: "Prompt Intent Decoupled", detail: "Inferred app specification & feature priorities." }
-  ];
+function AIActivityTimeline({ output, compiling, currentTask }) {
+  const activities = (output?.metrics?.stageTimings || []).map((stage) => ({
+    event: stage.name,
+    detail: "Stage completed for this compilation.",
+    time: Number.isFinite(stage.ms) ? `${stage.ms} ms` : ""
+  })).reverse();
 
   return (
     <motion.section
@@ -2013,16 +1989,17 @@ function AIActivityTimeline({ output, compiling }) {
       <div>
         <h3 className="text-lg font-bold font-mono text-cyan-300 uppercase tracking-widest flex items-center gap-2 mb-1">
           <Activity className="w-4.5 h-4.5 text-cyan-400" />
-          AI CHRONOGRAPHIC HUD LOGS
+          Compilation stages
         </h3>
         <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest">
-          Live stream tracking active AI neural activities.
+          Stage details reported for the latest result.
         </p>
       </div>
 
       <div className="glass-panel-ai rounded-2xl p-5 border border-cyan-500/10 h-[calc(100%-40px)] flex flex-col justify-between bg-slate-950/40">
         <div className="space-y-4.5 overflow-y-auto max-h-[300px] custom-scrollbar pr-2">
-          {(output ? activities : activities.slice(3)).map((item, idx) => (
+          {compiling && <div className="flex items-center gap-3 rounded-lg border border-blue-400/15 bg-blue-400/5 p-4 text-xs text-blue-100"><Loader2 size={16} className="animate-spin" /><span>{currentTask || "Compilation in progress"}</span></div>}
+          {!compiling && activities.map((item, idx) => (
             <motion.div
               key={idx}
               initial={{ opacity: 0, x: -10 }}
@@ -2040,13 +2017,14 @@ function AIActivityTimeline({ output, compiling }) {
               </div>
               <div className="flex-1 font-mono text-[10px]">
                 <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-white uppercase tracking-wider">{item.event}</span>
-                  <span className="text-[8px] text-slate-500">{item.time}</span>
+                  <span className="font-semibold text-white">{item.event}</span>
+                  <span className="text-[9px] text-slate-400">{item.time}</span>
                 </div>
-                <p className="text-slate-400 uppercase tracking-wide mt-0.5 leading-relaxed">{item.detail}</p>
+                <p className="text-slate-400 mt-0.5 leading-relaxed">{item.detail}</p>
               </div>
             </motion.div>
           ))}
+          {!compiling && activities.length === 0 && <div className="architecture-empty-state"><Activity size={19} /><strong>No stage timings yet</strong><span>Compile an idea to see the stages returned by the compiler.</span></div>}
         </div>
       </div>
     </motion.section>
@@ -2054,12 +2032,14 @@ function AIActivityTimeline({ output, compiling }) {
 }
 
 function SystemAnalytics({ output }) {
-  // Pre-configured custom bar charts data
-  const charts = [
-    { label: "GENERATION SUCCESS", percent: 100, val: "20/20 SUCCESS", color: "from-green-400 to-emerald-500 shadow-glow-emerald" },
-    { label: "PIPELINE RELIABILITY", percent: 99, val: "99.8% STABLE", color: "from-cyan-400 to-blue-500 shadow-glow-cyan" },
-    { label: "TOKEN CONSUMPTION", percent: 64, val: "1.4k AVG / RUN", color: "from-purple-400 to-pink-500" },
-    { label: "LATENCY EFFICIENCY", percent: 95, val: "0.2ms AVG", color: "from-amber-400 to-orange-500" }
+  const stageTimings = output?.metrics?.stageTimings || [];
+  const checks = output?.runtime?.checks || [];
+  const passedChecks = checks.filter((check) => check.pass).length;
+  const facts = [
+    { label: "Measured compile time", value: output?.metrics?.latencyMs != null ? `${output.metrics.latencyMs} ms` : "—" },
+    { label: "Compiler retries", value: output?.metrics?.retries != null ? String(output.metrics.retries) : "—" },
+    { label: "Runtime checks", value: output ? `${passedChecks} of ${checks.length} passed` : "—" },
+    { label: "Compilation result", value: output ? (output.ok ? "Validation passed" : "Review required") : "Not run" }
   ];
 
   return (
@@ -2070,66 +2050,46 @@ function SystemAnalytics({ output }) {
       className="space-y-4 text-left"
     >
       <div>
-        <h3 className="text-xl font-black text-cyan-300 flex items-center gap-2 font-mono uppercase tracking-wider">
-          <Gauge className="w-5 h-5 animate-pulse" />
-          OS METRICS & PERFORMANCE HUD
+        <h3 className="text-lg font-bold text-white flex items-center gap-2 font-sans">
+          <Gauge className="w-5 h-5 text-slate-400" />
+          Compilation details
         </h3>
-        <p className="text-slate-400 text-xs font-mono mt-1 uppercase tracking-widest text-[9px]">
-          Operational system telemetries compiled over consecutive sandbox compilations.
+        <p className="text-slate-400 text-xs mt-1">
+          Values reported by the latest compiler response; no historical telemetry is stored.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        {charts.map((chart, idx) => (
-          <div
-            key={idx}
-            className="glass-panel-ai p-5 rounded-2xl border border-cyan-500/10 hover:border-cyan-500/20 transition duration-300 flex flex-col justify-between"
-          >
-            <div className="font-mono text-left">
-              <span className="text-[8px] text-slate-500 uppercase tracking-widest font-bold">{chart.label}</span>
-              <p className="text-sm font-extrabold text-white uppercase tracking-wider mt-1">{chart.val}</p>
-            </div>
-
-            {/* Simulated premium progress gauge */}
-            <div className="mt-4 space-y-1.5 font-mono">
-              <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-white/5">
-                <motion.div
-                  className={`h-full bg-gradient-to-r ${chart.color}`}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${chart.percent}%` }}
-                  transition={{ duration: 1, delay: idx * 0.1 }}
-                />
-              </div>
-              <div className="flex items-center justify-between text-[7px] text-slate-600">
-                <span>BUFFER MIN</span>
-                <span>SYSTEM TARGET MAX</span>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">{facts.map((fact) => <div className="compilation-fact-card" key={fact.label}><span>{fact.label}</span><strong>{fact.value}</strong></div>)}</div>
+      {output && stageTimings.length > 0 && <div className="stage-timing-list">{stageTimings.map((stage) => <div className="stage-timing-row" key={stage.name}><span>{stage.name}</span><span>{Number.isFinite(stage.ms) ? `${stage.ms} ms` : "Not reported"}</span></div>)}</div>}
+      {!output && <div className="architecture-empty-state"><Gauge size={19} /><strong>No compilation metrics yet</strong><span>Measured stage details appear here after a compile.</span></div>}
     </motion.section>
   );
 }
 
 /* ================== INTERACTIVE SIMULATION MODALS ================== */
 
-function SettingsModal({ compileMode, setCompileMode, geminiApiKey, setGeminiApiKey, onClose }) {
+function SettingsModal({
+  compileMode,
+  setCompileMode,
+  geminiApiKey,
+  setGeminiApiKey,
+  groqApiKey,
+  setGroqApiKey,
+  onClose
+}) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
       <motion.div
-        className="glass-panel-auth max-w-lg w-full rounded-[2rem] p-8 border border-cyan-400/30 text-left relative overflow-hidden"
+        className="glass-panel-auth max-w-lg w-full rounded-[2rem] p-8 border border-indigo-400/30 text-left relative overflow-hidden"
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.9 }}
       >
-        <div className="absolute inset-0 scanlines opacity-5 pointer-events-none" />
-
-        <div className="flex items-center justify-between mb-6 pb-4 border-b border-cyan-500/10">
+        <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/10">
           <div className="flex items-center gap-2">
-            <Settings className="w-5 h-5 text-cyan-400 animate-spin" style={{ animationDuration: '6s' }} />
-            <h2 className="text-xl font-black font-mono text-cyan-300 uppercase tracking-widest">
-              SYSTEM SETTINGS
+            <Settings className="w-5 h-5 text-indigo-400 animate-spin" style={{ animationDuration: "8s" }} />
+            <h2 className="text-xl font-black font-sans text-white uppercase tracking-wider">
+              Compiler Settings
             </h2>
           </div>
           <button
@@ -2140,92 +2100,77 @@ function SettingsModal({ compileMode, setCompileMode, geminiApiKey, setGeminiApi
           </button>
         </div>
 
-        <div className="space-y-6 font-mono text-xs text-slate-300">
+        <div className="space-y-6 text-xs text-slate-300">
           <div className="space-y-2">
-            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">COMPILE TIER MODE</span>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setCompileMode("local")}
-                className={`p-3 border rounded-xl font-bold uppercase tracking-widest transition-all ${
-                  compileMode === "local"
-                    ? "border-cyan-400 text-cyan-300 bg-cyan-500/5 shadow-glow-cyan"
-                    : "border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white"
-                }`}
-              >
-                LOCAL HYBRID (SEED)
-              </button>
-              <button
-                type="button"
-                onClick={() => setCompileMode("gemini")}
-                className={`p-3 border rounded-xl font-bold uppercase tracking-widest transition-all ${
-                  compileMode === "gemini"
-                    ? "border-cyan-400 text-cyan-300 bg-cyan-500/5 shadow-glow-cyan"
-                    : "border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white"
-                }`}
-              >
-                LIVE MODEL (GEMINI)
-              </button>
+            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">
+              AI PROVIDER ROUTING
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: "auto", label: "Auto (Gemini ➔ Groq)" },
+                { id: "gemini", label: "Google Gemini 2.5" },
+                { id: "groq", label: "Groq Llama-3.3" },
+                { id: "local", label: "Local Deterministic" }
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setCompileMode(p.id)}
+                  className={`p-2.5 border rounded-xl font-bold uppercase text-[10px] tracking-wider transition-all ${
+                    compileMode === p.id
+                      ? "border-indigo-400 text-indigo-300 bg-indigo-500/10 shadow-lg shadow-indigo-500/20"
+                      : "border-slate-800 text-slate-400 hover:border-slate-700 hover:text-white"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          {compileMode === "gemini" && (
-            <motion.div
-              className="space-y-2"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              transition={{ duration: 0.3 }}
+          <div className="space-y-3">
+            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">
+              CUSTOM API CREDENTIALS (OPTIONAL)
+            </span>
+
+            <div>
+              <label className="block text-[10px] text-slate-400 uppercase font-semibold mb-1">
+                Gemini API Key
+              </label>
+              <input
+                type="password"
+                value={geminiApiKey}
+                onChange={(e) => setGeminiApiKey(e.target.value)}
+                placeholder="GEMINI_API_KEY (Leave empty to use server environment)"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white placeholder:text-slate-600 outline-none focus:border-indigo-500 font-mono text-[11px]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] text-slate-400 uppercase font-semibold mb-1">
+                Groq API Key
+              </label>
+              <input
+                type="password"
+                value={groqApiKey}
+                onChange={(e) => setGroqApiKey(e.target.value)}
+                placeholder="GROQ_API_KEY (Leave empty to use server environment)"
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white placeholder:text-slate-600 outline-none focus:border-indigo-500 font-mono text-[11px]"
+              />
+            </div>
+
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              Keys entered here are securely saved in your browser's local sandbox and only sent to serverless compilation endpoints over HTTPS.
+            </p>
+          </div>
+
+          <div className="pt-2">
+            <button
+              onClick={onClose}
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold uppercase text-xs tracking-wider transition shadow-lg shadow-indigo-600/30"
             >
-              <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">GEMINI API KEY</span>
-              <div className="relative">
-                <input
-                  type="password"
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  placeholder="ENTER AIzaSy... CREDENTIAL KEYS"
-                  className="w-full bg-slate-950 border border-cyan-400/20 rounded-xl px-4 py-3.5 text-white placeholder:text-slate-700 outline-none focus:border-cyan-400 focus:bg-slate-900/60 font-mono text-[10px] uppercase tracking-wider"
-                />
-              </div>
-              <p className="text-[9px] text-slate-500 leading-relaxed uppercase">
-                Your API key is securely persisted locally inside your browser's sandbox. It is transmitted directly to the serverless Vercel endpoints to generate structurally sound schemas.
-              </p>
-            </motion.div>
-          )}
-
-          <div className="space-y-2">
-            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">SPEECH ALGORITHM PRESET</span>
-            <p className="text-[10px] text-slate-500 leading-relaxed uppercase">
-              Configure speech capturing presets. Simulated capturing utilizes automated algorithm typing.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest">SANDBOX CONFIGURATION</span>
-            <div className="flex items-center justify-between p-3 border border-slate-900 bg-slate-950/60 rounded-xl">
-              <span className="uppercase text-[10px] text-slate-400 font-bold">Auto-seed mockup databases</span>
-              <div className="w-8 h-4 rounded-full bg-cyan-500 flex items-center justify-end px-0.5 cursor-pointer">
-                <div className="w-3.5 h-3.5 rounded-full bg-slate-950" />
-              </div>
-            </div>
-          </div>
-
-          {/* Section: General Settings & Terms */}
-          <div className="space-y-3 pt-4 border-t border-slate-900">
-            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest block">GENERAL COMPILER TERMS</span>
-            <div className="p-3 border border-slate-900 bg-slate-950/80 rounded-xl max-h-24 overflow-y-auto space-y-2 leading-relaxed text-[9px] text-slate-500 uppercase font-sans">
-              <p>
-                1. Compiler Usage Agreement: By utilizing the AI Compiler Studio platform, you agree that all compiled blueprints, generated databases, and API routes are processed in browser-based sandbox instances.
-              </p>
-              <p>
-                2. Resource Allocations: High-tier model generations utilize rate-limited APIs. Users agree to prevent high-frequency automated script calls or abusive workloads against the multi-agent pipelines.
-              </p>
-              <p>
-                3. Intellect Rights: Compiled structures, schemas, and mockup records remain the sole intellectual asset of the workspace creator. Platform operators do not claim ownership of synthesized assets.
-              </p>
-            </div>
-            <p className="text-[9px] text-slate-400 leading-normal uppercase">
-              By checking options and saving, you confirm agreement to the global compiler workspace terms of service.
-            </p>
+              Save & Close
+            </button>
           </div>
         </div>
       </motion.div>
@@ -2233,7 +2178,7 @@ function SettingsModal({ compileMode, setCompileMode, geminiApiKey, setGeminiApi
   );
 }
 
-function ProfileModal({ user, onClose }) {
+function ProfileModal({ user, onClose, onChangeAudience }) {
   const [profileName, setProfileName] = useState(user?.name || "Operator");
   const [profileEmail, setProfileEmail] = useState(user?.email || "operator@studio.ai");
   const [avatarTheme, setAvatarTheme] = useState(() => localStorage.getItem("profile_avatar_theme") || "indigo");
@@ -2295,6 +2240,10 @@ function ProfileModal({ user, onClose }) {
               </span>
             </div>
           </div>
+
+          <button type="button" className="profile-preferences-button" onClick={onChangeAudience}>
+            <span><Sparkles size={15} />Personalize examples and onboarding</span><ArrowRight size={15} />
+          </button>
 
           {/* Form Fields */}
           <div className="space-y-4">
@@ -2413,7 +2362,7 @@ function MockPreviewModal({ page, output, onClose }) {
           <div className="flex items-center gap-2">
             <PlayCircle className="w-5 h-5 text-cyan-400" />
             <h2 className="text-sm font-extrabold font-mono text-cyan-300 uppercase tracking-widest">
-              SIMULATED NODE IN-BROWSER HUD PAGE: {page.toUpperCase()}
+              Sandbox preview · {page}
             </h2>
           </div>
           <button
@@ -2427,6 +2376,7 @@ function MockPreviewModal({ page, output, onClose }) {
         {/* wireframe mockup view port */}
         <div className="flex-1 overflow-y-auto p-8 bg-slate-950 relative">
           <div className="absolute inset-0 grid-bg-cyber opacity-[0.03] pointer-events-none" />
+          <p className="relative z-10 max-w-3xl mx-auto mb-5 rounded-lg border border-amber-300/15 bg-amber-300/5 px-4 py-3 text-xs leading-relaxed text-amber-100/80">Sandbox preview with sample data generated from this blueprint. Changes here are temporary and do not create or modify a production application.</p>
 
           {page === "Login Page" ? (
             <div className="max-w-sm w-full mx-auto p-6 rounded-3xl border border-cyan-500/10 bg-slate-900/60 font-mono text-xs text-left space-y-4">
@@ -2467,16 +2417,16 @@ function MockPreviewModal({ page, output, onClose }) {
               {/* simulated metric grids */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="p-4 rounded-xl border border-cyan-500/10 bg-slate-900/40 text-left">
-                  <span className="text-[8px] text-slate-500 uppercase tracking-widest">TOTAL TELEMETRY LOGS</span>
-                  <p className="text-xl font-bold text-cyan-300 mt-1">{simulatedTable.length + 5}</p>
+                  <span className="text-[8px] text-slate-500 uppercase tracking-widest">Sample sandbox rows</span>
+                  <p className="text-xl font-bold text-cyan-300 mt-1">{simulatedTable.length}</p>
                 </div>
                 <div className="p-4 rounded-xl border border-cyan-500/10 bg-slate-900/40 text-left">
                   <span className="text-[8px] text-slate-500 uppercase tracking-widest">TARGET COLLECTION</span>
                   <p className="text-xl font-bold text-cyan-300 mt-1 uppercase truncate">{activeTable}</p>
                 </div>
                 <div className="p-4 rounded-xl border border-cyan-500/10 bg-slate-900/40 text-left">
-                  <span className="text-[8px] text-slate-500 uppercase tracking-widest">NODE INTEGRITY</span>
-                  <p className="text-xl font-bold text-cyan-300 mt-1">99.8%</p>
+                  <span className="text-[8px] text-slate-500 uppercase tracking-widest">Validation issues</span>
+                  <p className="text-xl font-bold text-cyan-300 mt-1">{output?.validation?.errors?.length || 0}</p>
                 </div>
               </div>
 
@@ -2825,116 +2775,6 @@ function AIOperatingSystemBackground() {
         />
       ))}
     </div>
-  );
-}
-
-function StudioFooter() {
-  const platformLinks = [
-    { label: "App Generator", href: "#" },
-    { label: "Pipeline Stepper", href: "#" },
-    { label: "Recent Blueprints", href: "#" },
-    { label: "Developer Console", href: "#" },
-    { label: "System Analytics", href: "#" }
-  ];
-
-  const resourceLinks = [
-    { label: "Documentation", href: "#" },
-    { label: "Validation Engine", href: "#" },
-    { label: "Repair Pipelines", href: "#" },
-    { label: "Vercel Deployments", href: "#" }
-  ];
-
-  const companyLinks = [
-    { label: "Privacy Policy", href: "#" },
-    { label: "Terms of Service", href: "#" },
-    { label: "System Status", href: "#" }
-  ];
-
-  return (
-    <motion.footer
-      initial={{ opacity: 0, y: 40 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 1, delay: 0.4, ease: "easeOut" }}
-      className="liquid-glass w-full rounded-3xl p-6 md:p-10 text-white/70 mt-32 md:mt-64 text-left z-10"
-    >
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-10 md:gap-12 mb-10">
-        {/* First Column */}
-        <div className="md:col-span-5 space-y-4">
-          <div className="flex items-center gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 256 256" fill="currentColor" className="text-cyan-400">
-              <path d="M 4.688 136 C 68.373 136 120 187.627 120 251.312 C 120 252.883 119.967 254.445 119.905 256 L 0 256 L 0 136.096 C 1.555 136.034 3.117 136 4.688 136 Z M 251.312 136 C 252.883 136 254.445 136.034 256 136.096 L 256 256 L 136.095 256 C 136.032 254.438 136.001 252.875 136 251.312 C 136 187.627 187.627 136 251.312 136 Z M 119.905 0 C 119.967 1.555 120 3.117 120 4.688 C 120 68.373 68.373 120 4.687 120 C 3.117 120 1.555 119.967 0 119.905 L 0 0 Z M 256 119.905 C 254.445 119.967 252.883 120 251.312 120 C 187.627 120 136 68.373 136 4.687 C 136 3.117 136.033 1.555 136.095 0 L 256 0 Z" />
-            </svg>
-            <span className="text-xl font-medium tracking-widest text-white uppercase font-sans">
-              AI COMPILER STUDIO
-            </span>
-          </div>
-          <p className="text-sm leading-relaxed max-w-sm font-sans text-slate-400">
-            AI Compiler Studio is a premium web development platform that compiles natural language specifications into complete, type-safe database schemas, API structures, and dynamic user interfaces in real time.
-          </p>
-        </div>
-
-        {/* Links Column */}
-        <div className="md:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-8">
-          <div>
-            <h4 className="text-sm uppercase tracking-wider text-white font-medium mb-4 font-sans">
-              Platform
-            </h4>
-            <ul className="text-xs space-y-2.5 font-sans">
-              {platformLinks.map((link) => (
-                <li key={link.label}>
-                  <a href={link.href} className="hover:text-white transition-colors duration-200 text-slate-400">
-                    {link.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="text-sm uppercase tracking-wider text-white font-medium mb-4 font-sans">
-              Resources
-            </h4>
-            <ul className="text-xs space-y-2.5 font-sans font-sans">
-              {resourceLinks.map((link) => (
-                <li key={link.label}>
-                  <a href={link.href} className="hover:text-white transition-colors duration-200 text-slate-400">
-                    {link.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="text-sm uppercase tracking-wider text-white font-medium mb-4 font-sans">
-              Company
-            </h4>
-            <ul className="text-xs space-y-2.5 font-sans">
-              {companyLinks.map((link) => (
-                <li key={link.label}>
-                  <a href={link.href} className="hover:text-white transition-colors duration-200 text-slate-400">
-                    {link.label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom Bar */}
-      <div className="pt-6 border-t border-white/10 flex flex-col md:flex-row items-center justify-between gap-6 md:gap-4 font-sans select-none">
-        <p className="text-[10px] uppercase tracking-widest opacity-50">AI Compiler Studio © {new Date().getFullYear()}</p>
-
-        <div className="flex items-center gap-4">
-          <span className="text-[10px] uppercase tracking-widest opacity-50">Platform Status:</span>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">All Systems Operational</span>
-          </div>
-        </div>
-      </div>
-    </motion.footer>
   );
 }
 

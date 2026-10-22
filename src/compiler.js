@@ -1,3 +1,5 @@
+import { generateProjectSource } from "./codegen.js";
+
 const PRODUCT_PATTERNS = [
   ["crm", "CRM", ["contacts", "companies", "deals", "activities"]],
   ["project", "Project Management", ["projects", "boards", "tasks", "comments"]],
@@ -44,7 +46,8 @@ export const STAGES = [
   "System Design",
   "Schema Generation",
   "Validation + Repair",
-  "Runtime Execution"
+  "Runtime Execution",
+  "Full-Stack Code Generation"
 ];
 
 export function compileApplication(userPrompt, options = {}) {
@@ -71,12 +74,17 @@ export function compileApplication(userPrompt, options = {}) {
 
   const runtime = runStage(STAGES[4], () => simulateRuntime(repair.schemas, finalValidation));
 
+  const project = runStage(STAGES[5], () =>
+    generateProjectSource({ intent, design, schemas: repair.schemas })
+  );
+
   return {
     ok: finalValidation.errors.length === 0 && runtime.ok,
     input: userPrompt,
     intent,
     design,
     schemas: repair.schemas,
+    project,
     validation: {
       ...finalValidation,
       originalIssues: firstValidation.errors,
@@ -694,3 +702,5 @@ function performanceSafeNow() {
   if (typeof performance !== "undefined" && performance.now) return performance.now();
   return Date.now();
 }
+
+export { generateProjectSource };

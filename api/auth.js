@@ -8,19 +8,57 @@ import {
   verifyPassword
 } from "../src/auth-db.js";
 
+// In-memory rate limiter for auth routes
+const authRateLimits = new Map();
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const MAX_ATTEMPTS_PER_WINDOW = 15;
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const record = authRateLimits.get(ip) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  if (now > record.resetAt) {
+    record.count = 1;
+    record.resetAt = now + RATE_LIMIT_WINDOW_MS;
+  } else {
+    record.count += 1;
+  }
+  authRateLimits.set(ip, record);
+  return record.count <= MAX_ATTEMPTS_PER_WINDOW;
+}
+
 export default async function handler(req, res) {
-  const url = new URL(req.url || "/api/auth", "http://localhost");
-  const segments = url.pathname.replace(/^\/api\/auth\/?/, "").split("/").filter(Boolean);
-  const [action] = segments;
+  // CORS support
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-gemini-api-key, x-groq-api-key");
+
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
+  const [action, subaction] = resolveAction(req);
 
   try {
+    // Health / root endpoint
+    if (!action && req.method === "GET") {
+      const user = await findUserByToken(bearerToken(req));
+      return res.status(200).json({
+        status: "ok",
+        service: "auth",
+        authenticated: Boolean(user),
+        user: publicUser(user)
+      });
+    }
+
+    // Password & session APIs
     if (req.method === "POST" && action === "register") return register(req, res);
     if (req.method === "POST" && action === "login") return login(req, res);
     if (req.method === "GET" && action === "me") return me(req, res);
+    if (req.method === "PUT" && action === "preferences") return updatePreferences(req, res);
     if (req.method === "POST" && action === "logout") return logout(req, res);
 
-    res.setHeader("Allow", "GET, POST");
-    return res.status(404).json({ error: "Auth route not found" });
+    res.setHeader("Allow", "GET, POST, PUT, OPTIONS");
+    return res.status(404).json({ error: `Auth route '${action || ""}' not found` });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const status = message.includes("MONGODB_URI") || message.includes("MONGO_URL") ? 503 : 500;
@@ -28,8 +66,47 @@ export default async function handler(req, res) {
   }
 }
 
+function resolveAction(req) {
+  // 1. Check query parameters populated by Vercel rewrites (e.g. /api/auth?action=login)
+  const queryAction = req.query?.action || req.query?.path;
+  if (queryAction) {
+    const segments = String(queryAction).split("/").filter(Boolean);
+    if (segments.length) return segments;
+  }
+
+  // 2. Parse from req.url searchParams or pathname
+  try {
+    const url = new URL(req.url || "/", "http://localhost");
+    const paramAction = url.searchParams.get("action") || url.searchParams.get("path");
+    if (paramAction) {
+      const segments = paramAction.split("/").filter(Boolean);
+      if (segments.length) return segments;
+    }
+
+    const segments = url.pathname.replace(/^\/api\/auth\/?/, "").split("/").filter(Boolean);
+    if (segments.length) return segments;
+  } catch {}
+
+  // 3. Check Vercel original path headers
+  const matchedPath = req.headers?.["x-matched-path"] || req.headers?.["x-forwarded-uri"] || "";
+  if (matchedPath) {
+    try {
+      const cleanPath = matchedPath.split("?")[0];
+      const segments = cleanPath.replace(/^\/api\/auth\/?/, "").split("/").filter(Boolean);
+      if (segments.length) return segments;
+    } catch {}
+  }
+
+  return [];
+}
+
 async function register(req, res) {
-  const body = parseBody(req.body);
+  const ip = req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "127.0.0.1";
+  if (!checkRateLimit(ip)) {
+    return res.status(429).json({ error: "Too many authentication requests. Please try again in a minute." });
+  }
+
+  const body = await readBody(req);
   const name = cleanName(body.name);
   const email = cleanEmail(body.email);
   const password = String(body.password || "");
@@ -67,7 +144,12 @@ async function register(req, res) {
 }
 
 async function login(req, res) {
-  const body = parseBody(req.body);
+  const ip = req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "127.0.0.1";
+  if (!checkRateLimit(ip)) {
+    return res.status(429).json({ error: "Too many authentication requests. Please try again in a minute." });
+  }
+
+  const body = await readBody(req);
   const email = cleanEmail(body.email);
   const password = String(body.password || "");
 
@@ -95,9 +177,45 @@ async function login(req, res) {
 }
 
 async function me(req, res) {
-  const user = await findUserByToken(bearerToken(req));
+  const token = bearerToken(req);
+  if (!token) return res.status(401).json({ error: "Not authenticated." });
+  const user = await findUserByToken(token);
   if (!user) return res.status(401).json({ error: "Not authenticated." });
   return res.status(200).json({ user: publicUser(user) });
+}
+
+async function updatePreferences(req, res) {
+  const user = await findUserByToken(bearerToken(req));
+  if (!user) return res.status(401).json({ error: "Not authenticated." });
+
+  const body = await readBody(req);
+  const profile = sanitizeExperienceProfile(body.experienceProfile);
+  if (!profile) return res.status(400).json({ error: "Choose a valid audience before saving preferences." });
+
+  const db = await getAuthDb();
+  await db.collection("users").updateOne(
+    { _id: user._id },
+    { $set: { experienceProfile: profile, updatedAt: new Date() } }
+  );
+  return res.status(200).json({ experienceProfile: profile });
+}
+
+function sanitizeExperienceProfile(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const audiences = new Set(["student", "developer", "founder", "business", "agency", "educator", "exploring"]);
+  const studentStatuses = new Set(["school", "college", "postgraduate", "educator", "not-student"]);
+  const experienceLevels = new Set(["beginner", "learning", "comfortable", "experienced"]);
+  const goals = new Set(["academic", "hackathon", "portfolio", "research", "startup", "learning"]);
+  const audience = String(value.audience || "");
+  if (!audiences.has(audience)) return null;
+
+  return {
+    audience,
+    studentStatus: studentStatuses.has(value.studentStatus) ? value.studentStatus : "",
+    studyField: String(value.studyField || "").trim().slice(0, 80),
+    experience: experienceLevels.has(value.experience) ? value.experience : "",
+    goal: goals.has(value.goal) ? value.goal : ""
+  };
 }
 
 async function logout(req, res) {
@@ -119,8 +237,38 @@ export function bearerToken(req) {
   return match?.[1] || "";
 }
 
-function parseBody(body) {
-  return typeof body === "string" ? JSON.parse(body || "{}") : body || {};
+async function readBody(req) {
+  if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
+  if (typeof req.body === "string") {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+  if (Buffer.isBuffer(req.body)) {
+    try {
+      return JSON.parse(req.body.toString("utf8"));
+    } catch {
+      return {};
+    }
+  }
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      data += chunk;
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(data || "{}"));
+      } catch {
+        resolve({});
+      }
+    });
+    req.on("error", () => resolve({}));
+  });
 }
 
 function cleanEmail(email) {
