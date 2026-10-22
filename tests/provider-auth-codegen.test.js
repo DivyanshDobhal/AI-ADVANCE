@@ -3,6 +3,7 @@ import { hashPassword, verifyPassword, createSessionToken, hashToken } from "../
 import { executeCompilerAI, AIProviderError, extractJsonFromText } from "../src/ai-providers.js";
 import { compileApplication } from "../src/compiler.js";
 import { generateProjectSource, performCrossLayerAudit, createProjectZip } from "../src/codegen.js";
+import { generateFrontendBlueprint, generateBackendBlueprint, validateBlueprints } from "../src/blueprints.js";
 
 async function runTests() {
   console.log("▶ Running AI Software Compiler Test Suite...\n");
@@ -106,6 +107,63 @@ async function runTests() {
     const zipBlob = await createProjectZip(result.project.files);
     assert(zipBlob, "Zip blob must be generated");
     assert(zipBlob.size > 1000, "Zip size must be non-trivial");
+  });
+
+  // 4. DUAL BLUEPRINTS (FRONTEND & BACKEND) TESTS
+  console.log("\n--- 4. Dual Blueprints Generation & Architecture Validation ---");
+  test("Frontend blueprint contains complete UI structure, routes, components, flows, and file tree", () => {
+    const result = compileApplication("Create an inventory management system with products and suppliers");
+    const fb = result.blueprints.frontend;
+    assert(fb, "Frontend blueprint must exist");
+    assert.strictEqual(typeof fb.overview.appName, "string", "Must have appName");
+    assert.strictEqual(typeof fb.overview.framework, "string", "Must have framework");
+    assert(Array.isArray(fb.pages) && fb.pages.length >= 2, "Must generate structured pages");
+    
+    // Validate each page has route, components, consumed endpoints, states
+    for (const page of fb.pages) {
+      assert(page.name, "Page must have a name");
+      assert(page.route, "Page must have a route");
+      assert(Array.isArray(page.components), "Page must have components list");
+      assert(Array.isArray(page.apiEndpointsConsumed), "Page must have consumed endpoints");
+      assert(page.states.loading && page.states.error, "Page must define UI states");
+    }
+
+    assert(fb.componentHierarchy.name, "Must have componentHierarchy name");
+    assert(Array.isArray(fb.componentHierarchy.children), "Must have component tree");
+    assert(Array.isArray(fb.userInteractionFlows) && fb.userInteractionFlows.length > 0, "Must have interaction flows");
+    assert(fb.stateAndDataFlow.sessionState, "Must specify session state architecture");
+    assert(fb.stylingAndDesign.designTokens, "Must specify design tokens");
+    assert(Array.isArray(fb.fileStructure) && fb.fileStructure.length > 5, "Must produce frontend file structure");
+  });
+
+  test("Backend blueprint contains complete server architecture, REST endpoints, business logic, auth, and DB models", () => {
+    const result = compileApplication("Create a medical appointment booking platform");
+    const bb = result.blueprints.backend;
+    assert(bb, "Backend blueprint must exist");
+    assert.strictEqual(typeof bb.overview.runtime, "string", "Must specify server runtime");
+    assert(Array.isArray(bb.serverArchitecture.requestProcessingPipeline), "Must specify request pipeline stages");
+    assert(Array.isArray(bb.apiEndpoints) && bb.apiEndpoints.length >= 3, "Must generate REST API endpoint specifications");
+
+    // Validate endpoint schema specs
+    for (const ep of bb.apiEndpoints) {
+      assert(ep.method, "Endpoint must specify HTTP method");
+      assert(ep.path, "Endpoint must specify route path");
+      assert(Array.isArray(ep.statusCodes), "Endpoint must document HTTP status codes");
+      assert(ep.databaseOperation, "Endpoint must document database operation");
+    }
+
+    assert(Array.isArray(bb.businessLogicRules) && bb.businessLogicRules.length > 0, "Must specify business logic rules");
+    assert(bb.authSystem.authenticationType, "Must specify authentication type");
+    assert(Array.isArray(bb.databaseBlueprint.collections), "Must specify database collections");
+    assert(Array.isArray(bb.fileStructure) && bb.fileStructure.length > 5, "Must produce backend file structure");
+  });
+
+  test("Cross-layer blueprint validator ensures 100% route alignment between frontend and backend", () => {
+    const result = compileApplication("Build a fitness workout planner with routines and logs");
+    const validation = result.blueprints.validation;
+    assert.strictEqual(validation.valid, true, "Blueprint validation must pass");
+    assert(validation.passedChecks > 0, "Checks must have run");
+    assert.strictEqual(validation.errors.length, 0, "No errors should exist");
   });
 
   console.log(`\n========================================`);

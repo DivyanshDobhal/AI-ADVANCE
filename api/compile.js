@@ -3,7 +3,10 @@ import {
   repairSchemas,
   simulateRuntime,
   validateSchemas,
-  generateProjectSource
+  generateProjectSource,
+  generateFrontendBlueprint,
+  generateBackendBlueprint,
+  validateBlueprints
 } from "../src/compiler.js";
 import { findUserByToken } from "../src/auth-db.js";
 import { bearerToken } from "./auth.js";
@@ -126,6 +129,25 @@ async function compilePromptWithAI(prompt, options) {
       schemas: repair.schemas
     });
 
+    const frontendBlueprint = generateFrontendBlueprint({
+      intent,
+      design,
+      schemas: repair.schemas,
+      project
+    });
+
+    const backendBlueprint = generateBackendBlueprint({
+      intent,
+      design,
+      schemas: repair.schemas,
+      project
+    });
+
+    const blueprintValidation = validateBlueprints({
+      frontend: frontendBlueprint,
+      backend: backendBlueprint
+    });
+
     return {
       ok: finalValidation.errors.length === 0 && runtime.ok,
       input: prompt,
@@ -133,6 +155,11 @@ async function compilePromptWithAI(prompt, options) {
       design,
       schemas: repair.schemas,
       project,
+      blueprints: {
+        frontend: frontendBlueprint,
+        backend: backendBlueprint,
+        validation: blueprintValidation
+      },
       validation: {
         ...finalValidation,
         originalIssues: validation.errors,

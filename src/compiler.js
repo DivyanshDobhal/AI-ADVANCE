@@ -1,4 +1,9 @@
 import { generateProjectSource } from "./codegen.js";
+import {
+  generateFrontendBlueprint,
+  generateBackendBlueprint,
+  validateBlueprints
+} from "./blueprints.js";
 
 const PRODUCT_PATTERNS = [
   ["crm", "CRM", ["contacts", "companies", "deals", "activities"]],
@@ -46,8 +51,10 @@ export const STAGES = [
   "System Design",
   "Schema Generation",
   "Validation + Repair",
-  "Runtime Execution",
-  "Full-Stack Code Generation"
+  "Frontend Blueprint",
+  "Backend Blueprint",
+  "Full-Stack Code Generation",
+  "Runtime Execution"
 ];
 
 export function compileApplication(userPrompt, options = {}) {
@@ -72,11 +79,24 @@ export function compileApplication(userPrompt, options = {}) {
   const repair = runStage(STAGES[3], () => repairSchemas({ intent, design, schemas }, firstValidation));
   const finalValidation = validateSchemas({ intent, design, schemas: repair.schemas });
 
-  const runtime = runStage(STAGES[4], () => simulateRuntime(repair.schemas, finalValidation));
-
-  const project = runStage(STAGES[5], () =>
+  const project = runStage(STAGES[6], () =>
     generateProjectSource({ intent, design, schemas: repair.schemas })
   );
+
+  const frontendBlueprint = runStage(STAGES[4], () =>
+    generateFrontendBlueprint({ intent, design, schemas: repair.schemas, project })
+  );
+
+  const backendBlueprint = runStage(STAGES[5], () =>
+    generateBackendBlueprint({ intent, design, schemas: repair.schemas, project })
+  );
+
+  const blueprintValidation = validateBlueprints({
+    frontend: frontendBlueprint,
+    backend: backendBlueprint
+  });
+
+  const runtime = runStage(STAGES[7], () => simulateRuntime(repair.schemas, finalValidation));
 
   return {
     ok: finalValidation.errors.length === 0 && runtime.ok,
@@ -85,6 +105,11 @@ export function compileApplication(userPrompt, options = {}) {
     design,
     schemas: repair.schemas,
     project,
+    blueprints: {
+      frontend: frontendBlueprint,
+      backend: backendBlueprint,
+      validation: blueprintValidation
+    },
     validation: {
       ...finalValidation,
       originalIssues: firstValidation.errors,
@@ -703,4 +728,9 @@ function performanceSafeNow() {
   return Date.now();
 }
 
-export { generateProjectSource };
+export {
+  generateProjectSource,
+  generateFrontendBlueprint,
+  generateBackendBlueprint,
+  validateBlueprints
+};
