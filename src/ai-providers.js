@@ -3,7 +3,7 @@ import Groq from "groq-sdk";
 
 export const SUPPORTED_MODELS = {
   gemini: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-  groq: process.env.GROQ_MODEL || "llama-3.3-70b-versatile"
+  groq: process.env.GROQ_MODEL || "openai/gpt-oss-120b"
 };
 
 export class AIProviderError extends Error {
@@ -207,7 +207,7 @@ export async function generateWithGroq(prompt, seed, options = {}) {
     });
   }
 
-  const model = options.model || process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+  const model = options.model || process.env.GROQ_MODEL || "openai/gpt-oss-120b";
   const timeoutMs = options.timeoutMs || 45000;
 
   try {
